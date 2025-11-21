@@ -19,7 +19,8 @@ It prevents equipment loss, tracks costs, manages assignments in every organizat
 
 ## 2. Code Explainations and Data Structure
 Architecture Evolution of the Project:
-TBA
+
+<br>TBA
 
 ### Project Files
 - :file_folder: *`python`* folder contains application Python code and dummy data
