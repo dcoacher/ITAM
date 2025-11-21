@@ -26,7 +26,9 @@ TBA
 TBA
 
 ## 4. Previous Versions
-[it-asset-management](https://github.com/dcoacher/it-asset-management)
+- **Name:** [IT Asset Management](https://github.com/dcoacher/it-asset-management)
+    - **Version:** 1.0
+    - **Released date:** 4 months ago
 
 ## 5. License
 [![GPLv3 License](https://img.shields.io/badge/License-GPL%20v3-yellow.svg)](https://github.com/dcoacher/ITAM/blob/main/LICENSE)
