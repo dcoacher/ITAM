@@ -14,7 +14,7 @@ Make your IT Asset Management process simple and controlled. This is a complete 
 TBA
 
 ## 1. Introduction
-Why we have decided to made this application? The answer is pretty simple - every IT department needs asset tracking.<br>
+Why we have decided to made this application? The answer is pretty simple - every IT department needs asset tracking management system.<br>
 It prevents equipment loss, tracks costs, manages assignments in every organization.
 
 ## 2. Code Explainations and Data Structure
