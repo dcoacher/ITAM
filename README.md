@@ -19,7 +19,6 @@ It prevents equipment loss, tracks costs, manages assignments in every organizat
 
 ## 2. Code Explainations and Data Structure
 Architecture Evolution of the Project:
-
 <br>TBA
 
 ### Project Files
