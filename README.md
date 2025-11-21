@@ -7,9 +7,9 @@ Make your IT Asset Management process simple and controlled. This is a complete 
 1. [Introduction](#1-introduction)<br>
 2. [Code Explanations and Data Structure](#2-code-explanations-and-data-structure)<br>
 3. [Deployment Process](#3-deployment-process)<br>
-4. [Previous Versions](#4-previous-versions)<br>
-5. [License](#5-license)<br>
-6. [Authors](#6-authors)<br>
+4. [License](#4-license)<br>
+5. [Authors](#5-authors)<br>
+6. [Previous Versions](#6-previous-versions)<br>
 7. [Feedback](#7-feedback)<br>
 TBA
 
@@ -25,18 +25,18 @@ TBA
 ## 3. Deployment Process
 TBA
 
-## 4. Previous Versions
-**Name:** [IT Asset Management](https://github.com/dcoacher/it-asset-management)<br>
-**Version:** 1.0<br>
-**Release date:** July 28, 2025
-
-## 5. License
+## 4. License
 [![GPLv3 License](https://img.shields.io/badge/License-GPL%20v3-yellow.svg)](https://github.com/dcoacher/ITAM/blob/main/LICENSE)
 
-## 6. Authors
+## 5. Authors
 As for the previous versions, this project version is a result of the great collaboration of the two developers:
 - Desmond Coacher - [@dcoacher](https://github.com/dcoacher)
 - Artiom Krits - [@ArtiomKrits92](https://github.com/ArtiomKrits92)
+
+## 6. Previous Versions
+**Name:** [IT Asset Management](https://github.com/dcoacher/it-asset-management)<br>
+**Version:** 1.0<br>
+**Release date:** July 28, 2025
 
 ## 7. Feedback
 If you have any feedback, feel free to contact us via email: 
