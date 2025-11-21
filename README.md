@@ -26,7 +26,7 @@ TBA
 TBA
 
 ## 4. Previous Versions
-TBA
+[it-asset-management](https://github.com/dcoacher/it-asset-management)
 
 ## 5. License
 [![GPLv3 License](https://img.shields.io/badge/License-GPL%20v3-yellow.svg)](https://github.com/dcoacher/ITAM/blob/main/LICENSE)
