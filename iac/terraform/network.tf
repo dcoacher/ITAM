@@ -1,11 +1,13 @@
 # Network
 # Data source for availability zones
 data "aws_availability_zones" "available" {
+  provider = aws.North-Virginia
   state = "available"
 }
 
 # VPC
 resource "aws_vpc" "ITAM-VPC" {
+  provider = aws.North-Virginia
   cidr_block           = "10.0.0.0/16"
   tags = {
     Name = "itam-vpc"
@@ -14,6 +16,7 @@ resource "aws_vpc" "ITAM-VPC" {
 
 # IGW
 resource "aws_internet_gateway" "ITAM-IGW" {
+  provider = aws.North-Virginia
   vpc_id = aws_vpc.ITAM-VPC.id
 
   tags = {
@@ -23,6 +26,7 @@ resource "aws_internet_gateway" "ITAM-IGW" {
 
 # Public Subnet 1
 resource "aws_subnet" "ITAM-Public-Subnet-1" {
+  provider = aws.North-Virginia
   vpc_id                  = aws_vpc.ITAM-VPC.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = data.aws_availability_zones.available.names[0]
@@ -35,6 +39,7 @@ resource "aws_subnet" "ITAM-Public-Subnet-1" {
 
 # Public Subnet 2
 resource "aws_subnet" "ITAM-Public-Subnet-2" {
+  provider = aws.North-Virginia
   vpc_id                  = aws_vpc.ITAM-VPC.id
   cidr_block              = "10.0.2.0/24"
   availability_zone       = data.aws_availability_zones.available.names[1]
@@ -47,6 +52,7 @@ resource "aws_subnet" "ITAM-Public-Subnet-2" {
 
 # Private Subnet for NFS
 resource "aws_subnet" "ITAM-Private-Subnet" {
+  provider = aws.North-Virginia
   vpc_id            = aws_vpc.ITAM-VPC.id
   cidr_block        = "10.0.3.0/24"
   availability_zone = data.aws_availability_zones.available.names[0]
@@ -58,6 +64,7 @@ resource "aws_subnet" "ITAM-Private-Subnet" {
 
 # Route Table for Public Subnets
 resource "aws_route_table" "ITAM-RT" {
+  provider = aws.North-Virginia
   vpc_id = aws_vpc.ITAM-VPC.id
 
   route {
@@ -70,14 +77,16 @@ resource "aws_route_table" "ITAM-RT" {
   }
 }
 
-# Associate Public Subnet 1 with Route Table
-resource "aws_route_table_association" "public_1" {
+# Public 1 RTA
+resource "aws_route_table_association" "ITAM-RTA-Public-1" {
+  provider = aws.North-Virginia
   subnet_id      = aws_subnet.ITAM-Public-Subnet-1.id
   route_table_id = aws_route_table.ITAM-RT.id
 }
 
-# Associate Public Subnet 2 with Route Table
-resource "aws_route_table_association" "public_2" {
+# Public 2 RTA
+resource "aws_route_table_association" "ITAM-RTA-Public-2" {
+  provider = aws.North-Virginia
   subnet_id      = aws_subnet.ITAM-Public-Subnet-2.id
   route_table_id = aws_route_table.ITAM-RT.id
 }
