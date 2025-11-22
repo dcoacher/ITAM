@@ -18,7 +18,7 @@ resource "aws_security_group" "ITAM-EC2-SG" {
     from_port       = 31415
     to_port        = 31415
     protocol        = "tcp"
-    security_groups = [aws_security_group.ITAM-ALB.id]
+    security_groups = [aws_security_group.ITAM-EC2-SG.id]
   }
 
 #   ingress {
