@@ -7,12 +7,10 @@ import storage
 items_db = storage.load_items()   # Load items database data from disk
 users_db = storage.load_users()   # Load users database data from disk
 
-
 def _initial_counter(db):   # Calculate initial counter from existing data
     if not db:
         return 1
     return max(int(key) for key in db.keys()) + 1
-
 
 item_id_counter = _initial_counter(items_db)   # Creation of Item ID Counter value
 user_id_counter = _initial_counter(users_db)   # Creation of User ID Counter value
@@ -201,7 +199,6 @@ def show_user_items_select():
     # GET method: render user selection form
     return render_template("show_user_items_select.html", users=users_db, menu_links=get_menu_links())
 
-
 @app.route("/show_user_items/<user_id>") # Show Items by User ID Route
 def show_user_items(user_id):
     if user_id not in users_db:
@@ -225,4 +222,7 @@ def stock_by_categories():
     return render_template("stock_by_categories.html", stock=stock, menu_links=get_menu_links())
 
 if __name__ == "__main__": # Run the application on port 31415
-    app.run(host="0.0.0.0", port=31415, debug=True)
+    import os # Importing module
+    port = int(os.environ.get("PORT", 31415))
+    debug = os.environ.get("FLASK_DEBUG", "False").lower() == "true"
+    app.run(host="0.0.0.0", port=port, debug=debug)
