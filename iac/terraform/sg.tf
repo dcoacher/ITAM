@@ -18,7 +18,7 @@ resource "aws_security_group" "ITAM-EC2-SG" {
     from_port       = 31415
     to_port        = 31415
     protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
+    security_groups = [aws_security_group.ITAM-ALB.id]
   }
 
 #   ingress {
@@ -26,7 +26,7 @@ resource "aws_security_group" "ITAM-EC2-SG" {
 #     from_port   = 6443
 #     to_port     = 6443
 #     protocol    = "tcp"
-#     cidr_blocks = [aws_vpc.main.cidr_block]
+#     cidr_blocks = [aws_vpc.ITAM-VPC.cidr_block]
 #   }
 
 #   ingress {
@@ -34,7 +34,7 @@ resource "aws_security_group" "ITAM-EC2-SG" {
 #     from_port   = 2049
 #     to_port     = 2049
 #     protocol    = "tcp"
-#     cidr_blocks = [aws_vpc.main.cidr_block]
+#     cidr_blocks = [aws_vpc.ITAM-VPC.cidr_block]
 #   }
 
   egress {
