@@ -1,6 +1,7 @@
 # SG's
 # SG for EC2 instances
 resource "aws_security_group" "ITAM-EC2-SG" {
+  provider = aws.North-Virginia
   name        = "itam-ec2-sg"
   description = "SG for EC2 instances"
   vpc_id      = aws_vpc.ITAM-VPC.id
@@ -51,6 +52,7 @@ resource "aws_security_group" "ITAM-EC2-SG" {
 
 # SG for Load Balancer
 resource "aws_security_group" "ITAM-ALB-SG" {
+  provider = aws.North-Virginia
   name        = "itam-alb-sg"
   description = "Security group for ALB"
   vpc_id      = aws_vpc.ITAM-VPC.id
