@@ -1,5 +1,6 @@
 # ALB
 resource "aws_lb" "ITAM-ALB" {
+  provider = aws.North-Virginia
   name               = "itam-alb"
   internal           = false
   load_balancer_type = "application"
@@ -15,6 +16,7 @@ resource "aws_lb" "ITAM-ALB" {
 
 # Target Group for ALB
 resource "aws_lb_target_group" "ITAM-TG" {
+  provider = aws.North-Virginia
   name     = "itam-tg"
   port     = 31415  # Flask webserver port
   protocol = "HTTP"
@@ -38,6 +40,7 @@ resource "aws_lb_target_group" "ITAM-TG" {
 
 # ALB Listener
 resource "aws_lb_listener" "ITAM-ALB-LISTENER" {
+  provider = aws.North-Virginia
   load_balancer_arn = aws_lb.ITAM-ALB.arn
   port              = "80"
   protocol          = "HTTP"
