@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Select User to View Assigned Items</h2>
+
+<form method="POST" class="mb-4">
+  <div class="form-group">
+    <label for="user_id">User ID:</label>
+    <input type="text" name="user_id" id="user_id" class="form-control" required>
+  </div>
+  <button type="submit" class="btn btn-primary mt-2">Show Items</button>
+</form>
+
+<h3>Available Users</h3>
+<ul>
+  {% for uid, user in users.items() %}
+    <li>User ID: <strong>{{ uid }}</strong> — {{ user['name'] }}</li>
+  {% endfor %}
+</ul>
+
+{% endblock %}

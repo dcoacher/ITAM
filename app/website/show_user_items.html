@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Items Assigned to {{ user['name'] }} (User ID: {{ user_id }})</h2>
+
+{% if items %}
+<table class="table table-bordered">
+  <thead>
+    <tr>
+      <th>Item ID</th>
+      <th>Category</th>
+      <th>Sub Category</th>
+      <th>Manufacturer</th>
+      <th>Model</th>
+      <th>Price (₪)</th>
+      <th>Quantity</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+    <tr>
+      <td>{{ item['id'] }}</td>
+      <td>{{ item['main_category'] }}</td>
+      <td>{{ item['sub_category'] }}</td>
+      <td>{{ item['manufacturer'] }}</td>
+      <td>{{ item['model'] }}</td>
+      <td>{{ item['price'] }}</td>
+      <td>{{ item['quantity'] }}</td>
+      <td>{{ item['status'] }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>This user has no assigned items.</p>
+{% endif %}
+
+<a href="{{ url_for('show_user_items_select') }}" class="btn btn-secondary mt-3">Back to User Selection</a>
+
+{% endblock %}

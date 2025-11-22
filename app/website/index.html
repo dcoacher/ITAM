@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>👋 Welcome to IT Asset Management System</h1>
+<p>Select an option from the navigation menu above.</p>
+<ul class="list-group mb-3">
+  <li class="list-group-item">Total Users: {{ total_users }}</li>
+  <li class="list-group-item">Total Items: {{ total_items }}</li>
+  <li class="list-group-item">In Stock Items: {{ items_in_stock }}</li>
+  <li class="list-group-item">Assigned Items: {{ items_assigned }}</li>
+  {% for category, count in items_by_category.items() %}
+    <li class="list-group-item">{{ category }} Items: {{ count }}</li>
+  {% endfor %}
+</ul>
+
+<div class="mt-3">
+  <a href="https://github.com/dcoacher/it-asset-management" target="_blank" class="btn btn-outline-primary me-2">
+    🌐 View on GitHub
+  </a>
+  <a href="mailto:dcoacher@outlook.com?subject=Bug Report: IT Asset Management System" class="btn btn-outline-danger">
+    🐞 Report a Bug
+  </a>
+</div>
+
+<p>🙏 Credits to Desmond Coacher and Artiom Krits.</p>
+{% endblock %}

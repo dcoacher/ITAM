@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Modify Item ID: {{ item.id }}</h2>
+<form method="POST">
+  <div class="mb-3">
+    <label class="form-label">Category</label>
+    <input class="form-control" value="{{ item.main_category }}" disabled />
+  </div>
+  <div class="mb-3">
+    <label for="sub_category" class="form-label">Sub Category</label>
+    <input class="form-control" id="sub_category" name="sub_category" value="{{ item.sub_category }}" disabled />
+  </div>
+  <div class="mb-3">
+    <label for="manufacturer" class="form-label">Manufacturer</label>
+    <input type="text" class="form-control" id="manufacturer" name="manufacturer" value="{{ item.manufacturer }}" required />
+  </div>
+  <div class="mb-3">
+    <label for="model" class="form-label">Model</label>
+    <input type="text" class="form-control" id="model" name="model" value="{{ item.model }}" required />
+  </div>
+  <div class="mb-3">
+    <label for="price" class="form-label">Price per Unit (₪)</label>
+    <input type="number" class="form-control" id="price" name="price" min="0" step="0.01" value="{{ item.price }}" required />
+  </div>
+  <button type="submit" class="btn btn-success">Save Changes</button>
+</form>
+{% endblock %}

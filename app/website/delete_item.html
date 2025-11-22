@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Delete Item</h2>
+<form method="POST">
+  <div class="mb-3">
+    <label for="item_id" class="form-label">Item ID</label>
+    <input type="number" class="form-control" id="item_id" name="item_id" min="1" required />
+  </div>
+  <button type="submit" class="btn btn-danger">Delete Item</button>
+</form>
+{% endblock %}

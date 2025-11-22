@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Assign Item</h2>
+<form method="POST">
+  <div class="mb-3">
+    <label for="item_id" class="form-label">Item ID</label>
+    <input type="number" class="form-control" id="item_id" name="item_id" min="1" required />
+  </div>
+  <div class="mb-3">
+    <label for="user_id" class="form-label">User ID</label>
+    <input type="number" class="form-control" id="user_id" name="user_id" min="1" required />
+  </div>
+  <button type="submit" class="btn btn-primary">Assign</button>
+</form>
+{% endblock %}

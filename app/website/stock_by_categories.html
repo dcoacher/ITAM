@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Stock Value by Categories</h2>
+<table class="table table-bordered w-50">
+  <thead>
+    <tr><th>Category</th><th>Total Value (₪)</th></tr>
+  </thead>
+  <tbody>
+  {% for category, total in stock.items() %}
+    <tr>
+      <td>{{ category }}</td>
+      <td>{{ total }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

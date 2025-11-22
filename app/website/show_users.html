@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>All Users</h2>
+
+{% if users %}
+<table class="table table-striped">
+  <thead>
+    <tr><th>User ID</th><th>Full Name</th><th>Assignment Items</th></tr>
+  </thead>
+  <tbody>
+  {% for user_id, user in users.items() %}
+    <tr>
+      <td>{{ user_id }}</td>
+      <td>{{ user['name'] }}</td>
+      <td>{{ user['items'] | length }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No users found in the database.</p>
+{% endif %}
+
+{% endblock %}
