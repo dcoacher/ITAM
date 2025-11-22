@@ -41,7 +41,9 @@ Architecture Evolution of the Project:
         - :page_facing_up: *`show_users.html`*
         - :page_facing_up: *`stock_by_categoeirs.html`*
     - :page_facing_up: *`app.py`* main application file
+    - :page_facing_up: *`requirements.txt`* environment dependencies required for installation file
     - :page_facing_up: *`storage.py`* storage file for operating with persistent storage
+- :page_facing_up: *`Dockerfile`* configuration file for Docker environment
 
 <br>TBA
 
