@@ -7,11 +7,11 @@ resource "aws_security_group" "ITAM-EC2-SG" {
   vpc_id      = aws_vpc.ITAM-VPC.id
 
   ingress {
-    description = "SSH from allowed IP only"
+    description = "SSH from anywhere"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = [var.allowed_ip]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {

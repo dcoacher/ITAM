@@ -34,7 +34,7 @@ variable "instance_type" {
   type        = string
 }
 
-variable "allowed_ip" {
-  description = "Your IP address, allowed for SSH access"
-  type        = string
-}
+# variable "allowed_ip" {
+#   description = "Your IP address, allowed for SSH access"
+#   type        = string
+# }
