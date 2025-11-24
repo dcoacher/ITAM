@@ -28,11 +28,11 @@ EOF
 # Inventory files
 cat <<EOF >/home/ubuntu/ansible/inventory.ini
 [control_plane]
-control-plane ansible_host=${CONTROL-PLANE-PRIVATE-IP}
+control-plane ansible_host="10.0.1.10"
 
 [workers]
-worker-1 ansible_host=${WORKER-1-PRIVATE-IP}
-worker-2 ansible_host=${WORKER-2-PRIVATE-IP}
+worker-1 ansible_host="10.0.1.11"
+worker-2 ansible_host="10.0.2.11"
 
 [all:vars]
 ansible_python_interpreter=/usr/bin/python3
@@ -185,7 +185,7 @@ cat <<EOF >/home/ubuntu/ansible/nfs.yml
     nfs_export_dir: /srv/nfs/k8s
     nfs_mount_dir: /mnt/nfs/k8s
     nfs_clients_cidr: "10.0.0.0/16"
-    nfs_server_ip: "${CONTROL-PLANE-PRIVATE-IP}"
+    nfs_server_ip: "10.0.1.10"
   tasks:
     - name: Install NFS common packages
       apt:
