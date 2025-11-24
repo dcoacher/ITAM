@@ -1,4 +1,7 @@
-# KeyPair
+# KP Creation and Deployment
+# By default lines 30-65 are commented. 
+# After first Terraform Env Deployment, uncomment those lines and deploy again.
+# KP.pem wil be copied to the Ansible & K8s Control Plane EC2 Machine
 
 # TLS Private Key Generation
 resource "tls_private_key" "ITAM-KP" {
