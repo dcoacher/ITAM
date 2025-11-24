@@ -24,7 +24,14 @@ resource "aws_instance" "WORKER-1" {
   key_name               = aws_key_pair.ITAM-KP.key_name
   vpc_security_group_ids = [aws_security_group.ITAM-EC2-SG.id]
   subnet_id              = aws_subnet.ITAM-Public-Subnet-1.id
-  user_data = local.ansible_workers_install_user_data
+  user_data = <<-EOF
+              #!/bin/bash
+              
+              # Set hostname
+              hostnamectl set-hostname k8s-worker1
+              # Update package list
+              apt update
+              EOF
   private_ip = "10.0.1.11"
 
   tags = {
@@ -41,7 +48,14 @@ resource "aws_instance" "WORKER-2" {
   key_name               = aws_key_pair.ITAM-KP.key_name
   vpc_security_group_ids = [aws_security_group.ITAM-EC2-SG.id]
   subnet_id              = aws_subnet.ITAM-Public-Subnet-2.id
-  user_data = local.ansible_workers_install_user_data
+  user_data = <<-EOF
+              #!/bin/bash
+              
+              # Set hostname
+              hostnamectl set-hostname k8s-worker2
+              # Update package list
+              apt update
+              EOF
   private_ip = "10.0.2.11"
 
   tags = {
