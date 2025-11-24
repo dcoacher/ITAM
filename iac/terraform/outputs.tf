@@ -42,6 +42,6 @@ output "SSH-TO-CONTROL-PLANE" {
 
 output "JOIN-TO-K8s-CLUSTER" {
   description = "Command for Joining Workers to K8s Cluster"
-  value       = "Run The Following Command on Controller Plane: cat /home/ubuntu/worker-join-command.sh"
+  value       = "After Deploying K8S Env - Run The Following Command on Controller Plane: cat /home/ubuntu/join-command.sh"
 }
 
