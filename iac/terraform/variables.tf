@@ -41,10 +41,5 @@ variable "instance_type" {
 
 # Ansible User-Data Script for K8s Control Plane
 locals {
-  ansible_control_plane_install_user_data = file("${path.module}/../ansible/control-plane-user-data.sh")
-}
-
-# Ansible User-Data Script for K8s Workers
-locals {
-  ansible_workers_install_user_data = file("${path.module}/../ansible/workers-user-data.sh")
+  ansible_control_plane_install_user_data = file("${path.module}/../ansible/user-data.sh")
 }
