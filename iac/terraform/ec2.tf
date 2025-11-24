@@ -7,36 +7,8 @@ resource "aws_instance" "CONTROL-PLANE" {
   key_name               = aws_key_pair.ITAM-KP.key_name
   vpc_security_group_ids = [aws_security_group.ITAM-EC2-SG.id]
   subnet_id              = aws_subnet.ITAM-Public-Subnet-1.id
-
-  user_data = <<-EOF
-              set -eux
-
-              # Update system packages
-              apt-get update -y
-
-              # Install dependencies for Ansible and tooling
-              apt-get install -y \
-                python3 \
-                python3-pip \
-                python3-venv \
-                git \
-                curl \
-                unzip \
-                software-properties-common \
-                apt-transport-https \
-                ca-certificates \
-                gnupg \
-                lsb-release
-
-              # Install Ansible
-              pip3 install --upgrade pip
-              pip3 install ansible
-
-              # Prepare workspace for Ansible playbooks
-              mkdir -p /home/ubuntu/ansible
-              chown ubuntu:ubuntu /home/ubuntu/ansible
-              chmod 755 /home/ubuntu/ansible
-              EOF
+  user_data = local.ansible_control_plane_install_user_data
+  private_ip = "10.0.1.10"
 
   tags = {
     Name = "itam-control-plane"
@@ -52,12 +24,8 @@ resource "aws_instance" "WORKER-1" {
   key_name               = aws_key_pair.ITAM-KP.key_name
   vpc_security_group_ids = [aws_security_group.ITAM-EC2-SG.id]
   subnet_id              = aws_subnet.ITAM-Public-Subnet-1.id
-
-  user_data = <<-EOF
-              #!/bin/bash
-              apt-get update
-              apt-get install -y python3-pip
-              EOF
+  user_data = local.ansible_workers_install_user_data
+  private_ip = "10.0.1.11"
 
   tags = {
     Name = "itam-worker-1"
@@ -73,12 +41,8 @@ resource "aws_instance" "WORKER-2" {
   key_name               = aws_key_pair.ITAM-KP.key_name
   vpc_security_group_ids = [aws_security_group.ITAM-EC2-SG.id]
   subnet_id              = aws_subnet.ITAM-Public-Subnet-2.id
-
-  user_data = <<-EOF
-              #!/bin/bash
-              apt-get update
-              apt-get install -y python3-pip
-              EOF
+  user_data = local.ansible_workers_install_user_data
+  private_ip = "10.0.2.11"
 
   tags = {
     Name = "itam-worker-2"
