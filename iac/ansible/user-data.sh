@@ -1,3 +1,45 @@
+#!/bin/bash
+
+# Set hostname
+hostnamectl set-hostname k8s-controller
+add-apt-repository universe
+apt update
+apt install -y ansible python3 python3-pip python3-venv git
+
+# Prepare workspace for Ansible playbooks
+mkdir -p /home/ubuntu/ansible
+chown ubuntu:ubuntu /home/ubuntu/ansible
+chmod 755 /home/ubuntu/ansible
+
+# Ansible.cfg
+cat <<'EOF' >/home/ubuntu/ansible/ansible.cfg
+[defaults]
+inventory = inventory.ini
+remote_user = ubuntu
+private_key_file = ~/KP.pem
+host_key_checking = False
+retry_files_enabled = False
+deprecation_warnings = False
+
+[ssh_connection]
+pipelining = True
+EOF
+
+# Inventory files
+cat <<EOF >/home/ubuntu/ansible/inventory.ini
+[control_plane]
+control-plane ansible_host="10.0.1.10"
+
+[workers]
+worker-1 ansible_host="10.0.1.11"
+worker-2 ansible_host="10.0.2.11"
+
+[all:vars]
+ansible_python_interpreter=/usr/bin/python3
+EOF
+
+# K8S Deployment Playbook
+cat <<'EOF' >/home/ubuntu/ansible/k8s.yml
 - name: Install Kubernetes prerequisites
   hosts: all
   become: yes
@@ -146,3 +188,74 @@
         content: "{{ join_cmd.stdout }} --cri-socket unix:///var/run/containerd/containerd.sock"
         dest: /home/ubuntu/join-command.sh
         mode: "0700"
+EOF
+
+# NFS Deployment Playbook
+cat <<EOF >/home/ubuntu/ansible/nfs.yml
+- name: Configure NFS server on control plane
+  hosts: control_plane
+  become: yes
+  vars:
+    nfs_export_dir: /srv/nfs/k8s
+    nfs_mount_dir: /mnt/nfs/k8s
+    nfs_clients_cidr: "10.0.0.0/16"
+    nfs_server_ip: "10.0.1.10"
+  tasks:
+    - name: Install NFS server packages
+      apt:
+        name: nfs-kernel-server
+        state: present
+
+    - name: Create export directory
+      file:
+        path: "{{ nfs_export_dir }}"
+        state: directory
+        mode: "0777"
+
+    - name: Configure /etc/exports
+      lineinfile:
+        path: /etc/exports
+        line: "{{ nfs_export_dir }} {{ nfs_clients_cidr }}(rw,sync,no_subtree_check,no_root_squash)"
+        create: yes
+
+    - name: Reload NFS exports
+      command: exportfs -ra
+
+    - name: Ensure NFS server is running
+      systemd:
+        name: nfs-kernel-server
+        enabled: yes
+        state: restarted
+
+- name: Configure NFS clients on workers
+  hosts: workers
+  become: yes
+  vars:
+    nfs_export_dir: /srv/nfs/k8s
+    nfs_mount_dir: /mnt/nfs/k8s
+    nfs_clients_cidr: "10.0.0.0/16"
+    nfs_server_ip: "10.0.1.10"
+  tasks:
+    - name: Install NFS common packages
+      apt:
+        name: nfs-common
+        state: present
+
+    - name: Create mount directory
+      file:
+        path: "{{ nfs_mount_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Ensure NFS mount present
+      mount:
+        path: "{{ nfs_mount_dir }}"
+        src: "{{ nfs_server_ip }}:{{ nfs_export_dir }}"
+        fstype: nfs
+        opts: rw
+        state: mounted
+EOF
+
+# Setting permissions
+chown -R ubuntu:ubuntu /home/ubuntu/ansible
+chmod 640 /home/ubuntu/ansible/*.yml /home/ubuntu/ansible/inventory.ini /home/ubuntu/ansible/ansible.cfg 2>/dev/null || true
