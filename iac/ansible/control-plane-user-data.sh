@@ -8,16 +8,17 @@ apt install -y ansible python3 python3-pip python3-venv git
 
 mkdir -p /etc/ansible
 
-
 # Create Ansible hosts file (Inventory)
 cat <<EOF > /etc/ansible/hosts
 
-[app]
-10.10.2.10
-10.10.3.10
+[control_plane]
+control-plane ansible_host="10.0.1.10"
 
-[app:vars]
-ansible_user=ubuntu
+[workers]
+worker-1 ansible_host="10.0.1.11"
+worker-2 ansible_host="10.0.2.11"
+
+[all:vars]
 ansible_python_interpreter=/usr/bin/python3
 ansible_ssh_private_key_file=/home/ubuntu/KP.pem
 
@@ -28,51 +29,160 @@ EOF
 
 # Create ansible.cfg file
 cat <<EOF > /etc/ansible/ansible.cfg
-
-
-
 [defaults]
 inventory = /etc/ansible/hosts
+remote_user = ubuntu
+private_key_file = ~/KP.pem
+host_key_checking = False
+retry_files_enabled = False
+deprecation_warnings = False
 
+[ssh_connection]
+pipelining = True
 EOF
 
-# Playbook Creation for Applications installation and Git repository cloning
-cat > /home/ubuntu/playbook.yaml <<'YAML'
----
-- hosts: all
-  become: true
+# Create K8svars File
+cat <<EOF > /home/ubuntu/k8s-vars.yml
+kubernetes_version: "1.29.2-00"
+pod_network_cidr: "10.244.0.0/16"
+containerd_config_path: /etc/containerd/config.toml
+nfs_export_dir: /srv/nfs/k8s
+nfs_mount_dir: /mnt/nfs/k8s
+nfs_clients_cidr: "10.0.0.0/16"
+nfs_server_ip: "10.0.1.10"
+EOF
+
+# Create K8s Deployment Playbook
+cat <<EOF > /home/ubuntu/k8s.yml
+- name: Install Kubernetes prerequisites
+  hosts: all
+  become: yes
+  vars_files:
+    - k8s-vars.yml
   tasks:
-    - name: Update & install packages (apt)
+    - name: Ensure apt cache is updated
       apt:
         update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
         name:
-          - git
-          - python3-pip
-          - python3-venv
-          - python3-flask
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - containerd
+          - kubelet={{ kubernetes_version }}
+          - kubeadm={{ kubernetes_version }}
+          - kubectl={{ kubernetes_version }}
         state: present
 
-    - name: Clone repo if missing
-      shell: test -d it-asset-management || git clone https://github.com/dcoacher/it-asset-management
-      args:
-        chdir: /home/ubuntu
-      become_user: ubuntu
+    - name: Hold kube packages at current version
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+        mark_hold: yes
 
-    - name: Create venv and install Flask
-      shell: |
-        python3 -m venv website/.venv
-        website/.venv/bin/pip install -U pip Flask
-      args:
-        chdir: /home/ubuntu/it-asset-management
+    - name: Enable and start containerd
+      systemd:
+        name: containerd
+        enabled: yes
+        state: started
 
-    - name: Start Flask (background)
-      shell: |
-        nohup /home/ubuntu/it-asset-management/website/.venv/bin/flask --app app run --host=0.0.0.0 --port=5000 \
-          > /var/log/flask-asset.log 2>&1 &
+- name: Initialize control-plane node
+  hosts: control_plane
+  become: yes
+  vars_files:
+    - k8s-vars.yml
+  tasks:
+    - name: Initialize Kubernetes control plane
+      command: kubeadm init --pod-network-cidr={{ pod_network_cidr }}
       args:
-        chdir: /home/ubuntu/it-asset-management/website
-YAML
+        creates: /etc/kubernetes/admin.conf
 
-# Setting permissions for the playbook
-chown ubuntu:ubuntu /home/ubuntu/playbook.yaml
-chmod 0644 /home/ubuntu/playbook.yaml
+    - name: Configure kubeconfig for ubuntu user
+      command: "{{ item }}"
+      with_items:
+        - mkdir -p /home/ubuntu/.kube
+        - cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
+        - chown ubuntu:ubuntu /home/ubuntu/.kube/config
+
+    - name: Generate join command file
+      command: kubeadm token create --print-join-command
+      register: join_cmd
+      changed_when: false
+
+    - name: Save join command locally
+      copy:
+        content: "{{ join_cmd.stdout }} --cri-socket unix:///var/run/containerd/containerd.sock"
+        dest: /home/ubuntu/join-command.sh
+        mode: "0700"
+EOF
+
+# Create NFS Deployment Playbook
+cat <<EOF > /home/ubuntu/nfs.yml
+- name: Configure NFS server on control plane
+  hosts: control_plane
+  become: yes
+  vars_files:
+    - k8s-vars.yml
+  tasks:
+    - name: Install NFS server packages
+      apt:
+        name: nfs-kernel-server
+        state: present
+
+    - name: Create export directory
+      file:
+        path: "{{ nfs_export_dir }}"
+        state: directory
+        mode: "0777"
+
+    - name: Configure /etc/exports
+      lineinfile:
+        path: /etc/exports
+        line: "{{ nfs_export_dir }} {{ nfs_clients_cidr }}(rw,sync,no_subtree_check,no_root_squash)"
+        create: yes
+
+    - name: Reload NFS exports
+      command: exportfs -ra
+
+    - name: Ensure NFS server is running
+      systemd:
+        name: nfs-kernel-server
+        enabled: yes
+        state: restarted
+
+- name: Configure NFS clients on workers
+  hosts: workers
+  become: yes
+  vars_files:
+    - k8s-vars.yml
+  tasks:
+    - name: Install NFS common packages
+      apt:
+        name: nfs-common
+        state: present
+
+    - name: Create mount directory
+      file:
+        path: "{{ nfs_mount_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Ensure NFS mount present
+      mount:
+        path: "{{ nfs_mount_dir }}"
+        src: "{{ nfs_server_ip }}:{{ nfs_export_dir }}"
+        fstype: nfs
+        opts: rw
+        state: mounted
+EOF
+
+# Setting permissions for the playbooks
+chown ubuntu:ubuntu /home/ubuntu/*
+chmod 0644 /home/ubuntu/*.yaml
