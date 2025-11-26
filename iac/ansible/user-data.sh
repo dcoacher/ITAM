@@ -1,9 +1,53 @@
 #!/bin/bash
 hostnamectl set-hostname k8s-controller
-add-apt-repository universe -y
 apt update
-apt install -y ansible python3 python3-pip python3-venv git
+swapoff -a
+sed -i '/ swap / s/^/#/' /etc/fstab
+echo "overlay" > /etc/modules-load.d/k8s.conf
+echo "br_netfilter" >> /etc/modules-load.d/k8s.conf
+modprobe overlay
+modprobe br_netfilter
+cat <<SYSCTL | tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward                 = 1
+SYSCTL
+sysctl --system
+apt install -y containerd
+mkdir -p /etc/containerd
+containerd config default | tee /etc/containerd/config.toml
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+systemctl restart containerd
+systemctl enable containerd
+apt install -y apt-transport-https ca-certificates curl gpg
+KUBE_VERSION=$(curl -s https://api.github.com/repos/kubernetes/kubernetes/releases/latest | grep tag_name | cut -d '"' -f 4 | cut -d 'v' -f 2 | cut -d '.' -f 1,2)
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v${KUBE_VERSION}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${KUBE_VERSION}/deb/ /" | tee /etc/apt/sources.list.d/kubernetes.list
+apt update
+apt install -y kubelet kubeadm kubectl
+apt-mark hold kubelet kubeadm kubectl
+apt install -y awscli ansible python3 python3-pip python3-venv git
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+sleep 30
+kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=Mem --cri-socket unix:///var/run/containerd/containerd.sock
+mkdir -p /home/ubuntu/.kube
+cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
+chown ubuntu:ubuntu /home/ubuntu/.kube/config
+chmod 600 /home/ubuntu/.kube/config
+mkdir -p /root/.kube
+cp -i /etc/kubernetes/admin.conf /root/.kube/config
+kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml
+kubeadm token create --print-join-command > /home/ubuntu/join-command.sh
+chmod 755 /home/ubuntu/join-command.sh
+chown ubuntu:ubuntu /home/ubuntu/join-command.sh
+apt install -y nfs-kernel-server
+mkdir -p /srv/nfs/k8s
+chmod 777 /srv/nfs/k8s
+echo "/srv/nfs/k8s 10.0.0.0/16(rw,sync,no_subtree_check,no_root_squash)" >> /etc/exports
+exportfs -ra
+systemctl restart nfs-kernel-server
+systemctl enable nfs-kernel-server
 mkdir -p /home/ubuntu/ansible
 chown ubuntu:ubuntu /home/ubuntu/ansible
 chmod 755 /home/ubuntu/ansible
@@ -27,93 +71,7 @@ worker-2 ansible_host="10.0.2.11"
 [all:vars]
 ansible_python_interpreter=/usr/bin/python3
 EOF
-cat <<'EOF' >/home/ubuntu/ansible/k8s.yml
-- name: Install Kubernetes prerequisites
-  hosts: all
-  become: yes
-  vars:
-    pod_network_cidr: "10.244.0.0/16"
-  tasks:
-    - apt: update_cache=yes cache_valid_time=3600
-    - apt: name={{item}} state=present
-      with_items: [apt-transport-https,ca-certificates,curl,gnupg,containerd]
-    - file: path=/etc/apt/keyrings state=directory mode=0755
-    - file: path=/etc/apt/sources.list.d/kubernetes.list state=absent
-    - file: path=/etc/apt/keyrings/kubernetes-apt-keyring.gpg state=absent
-    - shell: curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg && chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-    - copy: content="deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /\n" dest=/etc/apt/sources.list.d/kubernetes.list mode=0644
-    - apt: update_cache=yes cache_valid_time=0
-    - apt: name={{item}} state=present update_cache=yes
-      with_items: [kubelet,kubeadm,kubectl]
-    - shell: apt-mark hold kubelet kubeadm kubectl
-    - systemd: name=containerd enabled=yes state=started
-    - modprobe: name=br_netfilter state=present
-    - lineinfile: path=/etc/modules-load.d/k8s.conf line=br_netfilter create=yes
-    - shell: |
-        grep -q "net.bridge.bridge-nf-call-iptables" /etc/sysctl.d/k8s.conf || echo 'net.bridge.bridge-nf-call-iptables = 1' >> /etc/sysctl.d/k8s.conf
-        grep -q "net.ipv4.ip_forward" /etc/sysctl.d/k8s.conf || echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/k8s.conf
-        sysctl --system
-- name: Initialize control-plane node
-  hosts: control_plane
-  become: yes
-  vars:
-    pod_network_cidr: "10.244.0.0/16"
-  tasks:
-    - command: kubeadm init --pod-network-cidr={{ pod_network_cidr }} --ignore-preflight-errors=Mem --cri-socket unix:///var/run/containerd/containerd.sock
-      args: creates=/etc/kubernetes/admin.conf
-    - command: "{{ item }}"
-      with_items: [mkdir -p /home/ubuntu/.kube,cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config,chown ubuntu:ubuntu /home/ubuntu/.kube/config]
-    - shell: |
-        timeout=300;elapsed=0
-        while [ $elapsed -lt $timeout ]; do
-          kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes 2>/dev/null && exit 0
-          sleep 10;elapsed=$((elapsed+10))
-        done
-        exit 1
-      register: api_wait
-      failed_when: api_wait.rc != 0
-    - shell: |
-        sleep 30
-        for i in {1..10}; do
-          cmd=$(kubeadm token create --print-join-command 2>/dev/null) && echo "$cmd" && exit 0
-          sleep 15
-        done
-        exit 1
-      register: join_cmd
-      changed_when: false
-    - copy: content="{{ join_cmd.stdout }} --cri-socket unix:///var/run/containerd/containerd.sock" dest=/home/ubuntu/join-command.sh mode=0700
-    - shell: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
-      args: creates=/tmp/flannel-installed
-      register: flannel_install
-      changed_when: flannel_install.rc == 0
-    - shell: |
-        sleep 30
-        timeout=300;elapsed=0
-        while [ $elapsed -lt $timeout ]; do
-          flannel_ready=$(kubectl get pods -n kube-flannel --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l || echo "0")
-          [ "$flannel_ready" -ge "1" ] && exit 0
-          sleep 10;elapsed=$((elapsed+10))
-        done
-        exit 0
-      register: flannel_wait
-      failed_when: false
-      when: flannel_install.rc == 0
-    - shell: kubectl taint nodes --all node-role.kubernetes.io/control-plane- || true
-      ignore_errors: yes
-EOF
-cat <<EOF >/home/ubuntu/ansible/nfs.yml
-- name: Configure NFS server on control plane
-  hosts: control_plane
-  become: yes
-  vars:
-    nfs_export_dir: /srv/nfs/k8s
-    nfs_clients_cidr: "10.0.0.0/16"
-  tasks:
-    - apt: name=nfs-kernel-server state=present
-    - file: path={{ nfs_export_dir }} state=directory mode=0777
-    - lineinfile: path=/etc/exports line="{{ nfs_export_dir }} {{ nfs_clients_cidr }}(rw,sync,no_subtree_check,no_root_squash)" create=yes
-    - command: exportfs -ra
-    - systemd: name=nfs-kernel-server enabled=yes state=restarted
+cat <<'EOF' >/home/ubuntu/ansible/nfs.yml
 - name: Configure NFS clients on workers
   hosts: workers
   become: yes
@@ -123,8 +81,8 @@ cat <<EOF >/home/ubuntu/ansible/nfs.yml
     nfs_server_ip: "10.0.1.10"
   tasks:
     - apt: name=nfs-common state=present
-    - file: path={{ nfs_mount_dir }} state=directory mode=0755
-    - mount: path={{ nfs_mount_dir }} src={{ nfs_server_ip }}:{{ nfs_export_dir }} fstype=nfs opts=rw state=mounted
+    - file: path="{{ nfs_mount_dir }}" state=directory mode=0755
+    - mount: path="{{ nfs_mount_dir }}" src="{{ nfs_server_ip }}:{{ nfs_export_dir }}" fstype=nfs opts=rw state=mounted
 EOF
 chown -R ubuntu:ubuntu /home/ubuntu/ansible
 chmod 640 /home/ubuntu/ansible/*.yml /home/ubuntu/ansible/inventory.ini /home/ubuntu/ansible/ansible.cfg 2>/dev/null || true
