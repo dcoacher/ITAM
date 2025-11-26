@@ -451,9 +451,29 @@ echo "Deploying ITAM application to Kubernetes..."
 echo "Step 1: Deploying NFS storage..."
 kubectl apply -f nfs-pv.yaml
 
-# Wait for PV to be available
-echo "Waiting for PersistentVolume to be available..."
-kubectl wait --for=condition=Available pv/itam-nfs-pv --timeout=60s || true
+# Check PV status
+echo "Checking PersistentVolume status..."
+timeout=30
+elapsed=0
+while [ $elapsed -lt $timeout ]; do
+    pv_status=$(kubectl get pv itam-nfs-pv -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+    if [ "$pv_status" = "Available" ] || [ "$pv_status" = "Bound" ]; then
+        echo "✓ PersistentVolume is ready (status: $pv_status)"
+        break
+    fi
+    if [ "$pv_status" = "NotFound" ]; then
+        echo "Waiting for PersistentVolume to be created... ($elapsed/$timeout seconds)"
+    else
+        echo "Waiting for PersistentVolume to be ready (current status: $pv_status)... ($elapsed/$timeout seconds)"
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+done
+
+# Show PV status
+echo ""
+echo "PersistentVolume status:"
+kubectl get pv itam-nfs-pv || echo "Warning: Could not retrieve PV status"
 
 # Step 2: Deploy application using Helm or kubectl
 if command -v helm &> /dev/null; then
