@@ -4,11 +4,8 @@ FROM python:3.11-slim
 # Set working directory for the application
 WORKDIR /app
 
-# Copy requirements file in order to install dependencies
-COPY app/requirements.txt .
-
-# Install dependencies based on requirements.txt file
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies directly
+RUN pip install --no-cache-dir flask==3.0.0 pytest==8.2.1
 
 # Copy application files
 COPY app/ .
