@@ -425,6 +425,7 @@ chown -R ubuntu:ubuntu /home/ubuntu/helm
 chmod 755 /home/ubuntu/helm /home/ubuntu/helm/deploy.sh
 chmod 644 /home/ubuntu/helm/*.yaml /home/ubuntu/helm/Chart.yaml /home/ubuntu/helm/templates/*.yaml 2>/dev/null || true
 
+cat <<'EOF' >/home/ubuntu/readme.txt
 echo "============================================================================"
 echo "                        Post-Deployment Steps:"
 echo "============================================================================"
@@ -436,3 +437,5 @@ echo "Step 2: Run the Commands Below in Order to Join Workers to K8s Cluster:"
 echo 'ssh -i KP.pem ubuntu@10.0.1.11 "sudo $(cat /home/ubuntu/join-command.sh)"'
 echo 'ssh -i KP.pem ubuntu@10.0.2.11 "sudo $(cat /home/ubuntu/join-command.sh)"'
 echo "============================================================================"
+EOF
+chmod 644 /home/ubuntu/readme.txt
