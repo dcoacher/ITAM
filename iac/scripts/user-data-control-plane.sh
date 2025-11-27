@@ -429,11 +429,11 @@ cat <<'EOF' >/home/ubuntu/readme.txt
 ============================================================================
                         Post-Deployment Steps:
 ============================================================================
-Step 1: Rename The Workers EC2 Instances Accordingly:
+         Step 1: Rename The Workers EC2 Instances Accordingly:
 ssh -i KP.pem ubuntu@10.0.1.11 "sudo hostnamectl set-hostname k8s-worker-1"
 ssh -i KP.pem ubuntu@10.0.2.11 "sudo hostnamectl set-hostname k8s-worker-2"
 ============================================================================
-Step 2: Run the Commands Below in Order to Join Workers to K8s Cluster:
+   Step 2: Run the Commands Below in Order to Join Workers to K8s Cluster:
 ssh -i KP.pem ubuntu@10.0.1.11 "sudo $(cat /home/ubuntu/join-command.sh)"
 ssh -i KP.pem ubuntu@10.0.2.11 "sudo $(cat /home/ubuntu/join-command.sh)"
 ============================================================================
