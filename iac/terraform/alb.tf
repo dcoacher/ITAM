@@ -27,7 +27,7 @@ resource "aws_lb_target_group" "ITAM-TG" {
     healthy_threshold   = 2
     unhealthy_threshold = 2
     timeout             = 5
-    interval            = 30
+    interval            = 15
     path                = "/"
     protocol            = "HTTP"
     port                = 31415
@@ -49,4 +49,21 @@ resource "aws_lb_listener" "ITAM-ALB-LISTENER" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.ITAM-TG.arn
   }
+}
+
+# Target Group Attachments
+# Worker 1
+resource "aws_lb_target_group_attachment" "WORKER-1" {
+  provider = aws.North-Virginia
+  target_group_arn = aws_lb_target_group.ITAM-TG.arn
+  target_id        = aws_instance.WORKER-1.id
+  port             = 31415
+}
+
+# Worker 2
+resource "aws_lb_target_group_attachment" "WORKER-2" {
+  provider = aws.North-Virginia
+  target_group_arn = aws_lb_target_group.ITAM-TG.arn
+  target_id        = aws_instance.WORKER-2.id
+  port             = 31415
 }

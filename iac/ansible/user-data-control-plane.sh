@@ -48,6 +48,113 @@ echo "/srv/nfs/k8s 10.0.0.0/16(rw,sync,no_subtree_check,no_root_squash)" >> /etc
 exportfs -ra
 systemctl restart nfs-kernel-server
 systemctl enable nfs-kernel-server
+cat <<'EOF' >/srv/nfs/k8s/items.json
+{
+  "1": {
+    "id": "1",
+    "main_category": "Assets",
+    "sub_category": "Laptop",
+    "manufacturer": "Dell",
+    "model": "XPS",
+    "price": 5000,
+    "quantity": 1,
+    "status": "In Stock",
+    "assigned_to": null
+  },
+  "2": {
+    "id": "2",
+    "main_category": "Assets",
+    "sub_category": "Laptop",
+    "manufacturer": "Lenovo",
+    "model": "X1 Carbon",
+    "price": 8300,
+    "quantity": 1,
+    "status": "In Stock",
+    "assigned_to": null
+  },
+  "3": {
+    "id": "3",
+    "main_category": "Assets",
+    "sub_category": "PC",
+    "manufacturer": "Asus",
+    "model": "Desktop Intel Core i9 14900KS",
+    "price": 14900,
+    "quantity": 1,
+    "status": "Assigned",
+    "assigned_to": "1"
+  },
+  "4": {
+    "id": "4",
+    "main_category": "Accessories",
+    "sub_category": "Docking Station",
+    "manufacturer": "Dell",
+    "model": "WD19TB",
+    "price": 700,
+    "quantity": 1,
+    "status": "Assigned",
+    "assigned_to": "1"
+  },
+  "5": {
+    "id": "5",
+    "main_category": "Accessories",
+    "sub_category": "Mouse",
+    "manufacturer": "Logitech",
+    "model": "MX Master 3",
+    "price": 550,
+    "quantity": 1,
+    "status": "Assigned",
+    "assigned_to": "3"
+  },
+  "6": {
+    "id": "6",
+    "main_category": "Licenses",
+    "sub_category": "Subscription",
+    "manufacturer": "OpenAI",
+    "model": "ChatGPT Pro",
+    "price": 800,
+    "quantity": 1,
+    "status": "Assigned",
+    "assigned_to": "5"
+  }
+}
+EOF
+cat <<'EOF' >/srv/nfs/k8s/users.json
+{
+  "1": {
+    "name": "Brandon Guidelines",
+    "items": [
+      "3",
+      "4"
+    ]
+  },
+  "2": {
+    "name": "Carnegie Mondover",
+    "items": []
+  },
+  "3": {
+    "name": "John Doe",
+    "items": [
+      "5"
+    ]
+  },
+  "4": {
+    "name": "Abraham Pigeon",
+    "items": []
+  },
+  "5": {
+    "name": "Miles Tone",
+    "items": [
+      "6"
+    ]
+  },
+  "6": {
+    "name": "Claire Voyant",
+    "items": []
+  }
+}
+EOF
+chmod 666 /srv/nfs/k8s/*.json
+chown nobody:nogroup /srv/nfs/k8s/*.json
 mkdir -p /home/ubuntu/ansible
 chown ubuntu:ubuntu /home/ubuntu/ansible
 chmod 755 /home/ubuntu/ansible
