@@ -1010,72 +1010,144 @@ jobs:
         run: |
           mkdir -p ~/.ssh
           
+          echo "=== SSH Key Retrieval Debug ==="
+          echo "Method 1: Checking artifact download..."
+          
           # Method 1: Check if artifact download worked
           if [ -f "$HOME/.ssh/KP.pem" ]; then
             echo "✓ SSH key downloaded from artifact"
             mv "$HOME/.ssh/KP.pem" "$HOME/.ssh/id_rsa"
             chmod 600 "$HOME/.ssh/id_rsa"
+            echo "✓ SSH key ready (Method 1: Artifact)"
             exit 0
+          else
+            echo "✗ Artifact not found"
           fi
+          
+          echo ""
+          echo "Method 2: Checking workflow output..."
           
           # Method 2: Try workflow output (base64 encoded)
           SSH_KEY_B64="${{ needs.infrastructure.outputs.ssh_key_base64 }}"
-          if [ -n "$SSH_KEY_B64" ] && [ "$SSH_KEY_B64" != "" ]; then
-            echo "✓ SSH key found in workflow output. Decoding..."
-            echo "$SSH_KEY_B64" | base64 -d > "$HOME/.ssh/id_rsa" 2>/dev/null || \
-            echo "$SSH_KEY_B64" | base64 -D > "$HOME/.ssh/id_rsa" 2>/dev/null || \
-            echo "$SSH_KEY_B64" | base64 --decode > "$HOME/.ssh/id_rsa" 2>/dev/null
+          if [ -n "$SSH_KEY_B64" ] && [ "$SSH_KEY_B64" != "" ] && [ "$SSH_KEY_B64" != "null" ]; then
+            echo "✓ SSH key found in workflow output (length: ${#SSH_KEY_B64} chars)"
+            echo "Attempting to decode..."
+            
+            # Try different base64 decode commands
+            if echo "$SSH_KEY_B64" | base64 -d > "$HOME/.ssh/id_rsa" 2>/dev/null; then
+              DECODE_METHOD="base64 -d"
+            elif echo "$SSH_KEY_B64" | base64 -D > "$HOME/.ssh/id_rsa" 2>/dev/null; then
+              DECODE_METHOD="base64 -D"
+            elif echo "$SSH_KEY_B64" | base64 --decode > "$HOME/.ssh/id_rsa" 2>/dev/null; then
+              DECODE_METHOD="base64 --decode"
+            else
+              echo "✗ Failed to decode base64 (tried all methods)"
+              rm -f "$HOME/.ssh/id_rsa"
+            fi
+            
             if [ -f "$HOME/.ssh/id_rsa" ]; then
               chmod 600 "$HOME/.ssh/id_rsa"
               KEY_SIZE=$(wc -c < "$HOME/.ssh/id_rsa")
               if [ "$KEY_SIZE" -gt 100 ]; then
-                echo "✓ SSH key decoded from workflow output (size: $KEY_SIZE bytes)"
+                echo "✓ SSH key decoded from workflow output (size: $KEY_SIZE bytes, method: $DECODE_METHOD)"
+                echo "✓ SSH key ready (Method 2: Workflow Output)"
                 exit 0
               else
+                echo "✗ Decoded key is too small ($KEY_SIZE bytes)"
                 rm -f "$HOME/.ssh/id_rsa"
               fi
             fi
+          else
+            echo "✗ Workflow output is empty or null"
+            echo "  Value: '${SSH_KEY_B64:0:50}...' (first 50 chars)"
           fi
           
-          # Method 3: Retrieve from Terraform state
-          echo "SSH key not found in artifact or workflow output. Attempting to retrieve from Terraform state..."
+          echo ""
+          echo "Method 3: Attempting to retrieve from Terraform state..."
           
+          # Method 3: Retrieve from Terraform state
           cd iac/terraform
           
-          # Initialize Terraform (if needed)
-          terraform init 2>/dev/null || true
+          # Initialize Terraform (if needed) - try without backend first, then with backend
+          echo "Initializing Terraform..."
+          if terraform init -backend=false 2>&1 | head -20; then
+            echo "✓ Terraform initialized (no backend)"
+          elif terraform init 2>&1 | head -20; then
+            echo "✓ Terraform initialized (with backend)"
+          else
+            echo "⚠ Terraform init had issues, but continuing..."
+          fi
           
           # Try to get SSH key from Terraform state
+          echo "Checking Terraform state for SSH key..."
           if terraform state show tls_private_key.ITAM-KP &>/dev/null 2>&1; then
-            echo "Found SSH key in Terraform state. Extracting..."
+            echo "✓ Found SSH key in Terraform state. Extracting..."
             
-            # Try JSON output
-            PRIVATE_KEY=$(terraform state show -json tls_private_key.ITAM-KP 2>/dev/null | grep -o '"private_key_pem": "[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
-            
-            if [ -n "$PRIVATE_KEY" ] && [ "$PRIVATE_KEY" != "null" ] && [ ${#PRIVATE_KEY} -gt 100 ]; then
-              echo "$PRIVATE_KEY" > "$HOME/.ssh/id_rsa"
-              chmod 600 "$HOME/.ssh/id_rsa"
-              echo "✓ SSH key retrieved from Terraform state (JSON)"
-              exit 0
-            else
-              # Try text output
-              PRIVATE_KEY=$(terraform state show tls_private_key.ITAM-KP 2>/dev/null | grep "private_key_pem" | head -1 | sed 's/.*= "\(.*\)".*/\1/' || echo "")
+            # Try JSON output first (handles multiline properly)
+            echo "Attempting JSON extraction..."
+            PRIVATE_KEY_JSON=$(terraform state show -json tls_private_key.ITAM-KP 2>/dev/null)
+            if [ -n "$PRIVATE_KEY_JSON" ]; then
+              # Extract private_key_pem from JSON, handling multiline with jq if available, or with sed
+              if command -v jq &> /dev/null; then
+                PRIVATE_KEY=$(echo "$PRIVATE_KEY_JSON" | jq -r '.values.private_key_pem' 2>/dev/null || echo "")
+              else
+                # Fallback: extract between quotes, handling newlines
+                PRIVATE_KEY=$(echo "$PRIVATE_KEY_JSON" | sed -n '/"private_key_pem": "/,/"/p' | sed 's/.*"private_key_pem": "//;s/"$//' | sed ':a;N;$!ba;s/\\n/\n/g' || echo "")
+              fi
+              
               if [ -n "$PRIVATE_KEY" ] && [ "$PRIVATE_KEY" != "null" ] && [ ${#PRIVATE_KEY} -gt 100 ]; then
                 echo "$PRIVATE_KEY" > "$HOME/.ssh/id_rsa"
                 chmod 600 "$HOME/.ssh/id_rsa"
-                echo "✓ SSH key retrieved from Terraform state (text)"
+                KEY_SIZE=$(wc -c < "$HOME/.ssh/id_rsa")
+                echo "✓ SSH key retrieved from Terraform state (JSON, size: $KEY_SIZE bytes)"
+                echo "✓ SSH key ready (Method 3: Terraform State - JSON)"
                 exit 0
               else
+                echo "✗ JSON extraction failed or invalid (length: ${#PRIVATE_KEY})"
+              fi
+            fi
+            
+            # Try text output (handles multiline)
+            echo "Attempting text extraction..."
+            STATE_OUTPUT=$(terraform state show tls_private_key.ITAM-KP 2>/dev/null)
+            if [ -n "$STATE_OUTPUT" ]; then
+              # Extract everything between private_key_pem = " and the closing "
+              # This handles multiline keys
+              PRIVATE_KEY=$(echo "$STATE_OUTPUT" | sed -n '/private_key_pem = "/,/^"/p' | sed '1s/.*private_key_pem = "//; $s/"$//' | sed 's/\\n/\n/g' || echo "")
+              
+              # Alternative: try to get all lines after private_key_pem = " until we find a line ending with "
+              if [ -z "$PRIVATE_KEY" ] || [ ${#PRIVATE_KEY} -lt 100 ]; then
+                PRIVATE_KEY=$(echo "$STATE_OUTPUT" | awk '/private_key_pem = "/{flag=1; sub(/.*private_key_pem = "/, "");} flag{if(/^"/ && length>1) {sub(/"$/, ""); print; exit} else print}' | sed 's/\\n/\n/g' || echo "")
+              fi
+              
+              if [ -n "$PRIVATE_KEY" ] && [ "$PRIVATE_KEY" != "null" ] && [ ${#PRIVATE_KEY} -gt 100 ]; then
+                echo "$PRIVATE_KEY" > "$HOME/.ssh/id_rsa"
+                chmod 600 "$HOME/.ssh/id_rsa"
+                KEY_SIZE=$(wc -c < "$HOME/.ssh/id_rsa")
+                echo "✓ SSH key retrieved from Terraform state (text, size: $KEY_SIZE bytes)"
+                echo "✓ SSH key ready (Method 3: Terraform State - Text)"
+                exit 0
+              else
+                echo "✗ Text extraction also failed (length: ${#PRIVATE_KEY})"
                 echo "⚠ Could not extract valid SSH key from Terraform state"
+                echo "Debug: First 100 chars of state output:"
+                echo "$STATE_OUTPUT" | head -20
               fi
             fi
           else
-            echo "⚠ SSH key not found in Terraform state"
+            echo "✗ SSH key not found in Terraform state"
+            echo "Checking if state file exists..."
+            terraform state list 2>&1 | head -10 || echo "Could not list state"
+            echo ""
             echo "This may mean:"
             echo "  1. Infrastructure was created outside Terraform"
             echo "  2. Terraform state doesn't include the key"
-            echo "  3. State file is not accessible"
+            echo "  3. State file is not accessible (backend not configured)"
           fi
+          
+          echo ""
+          echo "=== All methods failed ==="
+          echo "SSH key could not be retrieved from any source."
 
       - name: Verify SSH key is available
         run: |
