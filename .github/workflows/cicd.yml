@@ -124,6 +124,10 @@ jobs:
             sed -i "s|10.0.1.10:6443|$PUBLIC_IP:6443|g" ~/.kube/config
             sed -i "s|https://10.0.1.10:6443|https://$PUBLIC_IP:6443|g" ~/.kube/config
             sed -i "s|server: https://10.0.1.10:6443|server: https://$PUBLIC_IP:6443|g" ~/.kube/config
+            # Disable certificate verification for public IP access
+            # (Certificate is only valid for private IP 10.0.1.10)
+            echo "Disabling certificate verification for public IP access..."
+            kubectl --kubeconfig ~/.kube/config config set-cluster kubernetes --insecure-skip-tls-verify=true
             # Verify replacement
             echo "Updated kubeconfig server:"
             kubectl --kubeconfig ~/.kube/config config view --minify -o jsonpath='{.clusters[0].cluster.server}' || true
