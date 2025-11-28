@@ -1270,17 +1270,34 @@ jobs:
             ./deploy.sh "$IMAGE_REPO" "$IMAGE_TAG"
           ENDSSH
 
-      - name: Wait for pods to be ready
-        timeout-minutes: 5
+      - name: Wait for deployment rollout to complete
+        timeout-minutes: 10
         run: |
-          echo "Waiting for application pods to be ready..."
-          kubectl wait --for=condition=ready pod -l app=itam-app --timeout=300s || {
-            echo "⚠ Some pods may not be ready yet. Checking status..."
-            kubectl get pods -l app=itam-app
-            kubectl describe pods -l app=itam-app | tail -50
-            exit 1
-          }
-          echo "✓ All pods are ready"
+          echo "Waiting for deployment rollout to complete..."
+          echo "This ensures all new pods are ready and old pods are terminated"
+          
+          # Wait for the deployment rollout to complete
+          # This waits for the new ReplicaSet to be fully rolled out
+          DEPLOYMENT_NAME=$(kubectl get deployment -l app=itam-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "itam-app")
+          if [ -n "$DEPLOYMENT_NAME" ]; then
+            echo "Waiting for deployment: $DEPLOYMENT_NAME"
+            kubectl rollout status deployment/$DEPLOYMENT_NAME --timeout=600s || {
+              echo "⚠ Deployment rollout did not complete in time. Checking status..."
+              kubectl get pods -l app=itam-app
+              kubectl describe deployment $DEPLOYMENT_NAME | tail -50
+              exit 1
+            }
+            echo "✓ Deployment rollout completed successfully"
+          else
+            echo "⚠ Deployment not found, waiting for pods to be ready instead..."
+            kubectl wait --for=condition=ready pod -l app=itam-app --timeout=300s || {
+              echo "⚠ Some pods may not be ready yet. Checking status..."
+              kubectl get pods -l app=itam-app
+              kubectl describe pods -l app=itam-app | tail -50
+              exit 1
+            }
+            echo "✓ All pods are ready"
+          fi
 
       - name: Verify deployment and health endpoint
         run: |
