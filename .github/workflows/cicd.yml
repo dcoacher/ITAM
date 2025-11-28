@@ -563,18 +563,73 @@ jobs:
             
             # First, check if instance is running
             echo "Checking instance status..."
+            # Try to find instance by public IP
             INSTANCE_ID=$(aws ec2 describe-instances \
-              --filters "Name=ip-address,Values=$IP" "Name=instance-state-name,Values=running,stopping,stopped" \
+              --filters "Name=ip-address,Values=$IP" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
               --query 'Reservations[0].Instances[0].InstanceId' \
               --output text --region us-east-1 2>/dev/null || echo "")
             
+            # If not found by IP, try by name tag
             if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ]; then
-              echo "WARNING: Could not find instance with IP $IP"
-              echo "Instance may still be starting. Continuing to wait..."
+              if [[ "$NAME" == *"Control Plane"* ]]; then
+                INSTANCE_ID=$(aws ec2 describe-instances \
+                  --filters "Name=tag:Name,Values=itam-control-plane" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+                  --query 'Reservations[0].Instances[0].InstanceId' \
+                  --output text --region us-east-1 2>/dev/null || echo "")
+              elif [[ "$NAME" == *"Worker 1"* ]]; then
+                INSTANCE_ID=$(aws ec2 describe-instances \
+                  --filters "Name=tag:Name,Values=itam-worker-1" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+                  --query 'Reservations[0].Instances[0].InstanceId' \
+                  --output text --region us-east-1 2>/dev/null || echo "")
+              elif [[ "$NAME" == *"Worker 2"* ]]; then
+                INSTANCE_ID=$(aws ec2 describe-instances \
+                  --filters "Name=tag:Name,Values=itam-worker-2" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+                  --query 'Reservations[0].Instances[0].InstanceId' \
+                  --output text --region us-east-1 2>/dev/null || echo "")
+              fi
+            fi
+            
+            if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ]; then
+              echo "⚠ WARNING: Could not find instance with IP $IP"
+              echo "Possible reasons:"
+              echo "  1. Instance is still being created (check AWS Console)"
+              echo "  2. IP address is incorrect or instance doesn't have public IP"
+              echo "  3. Instance was terminated or in error state"
+              echo "Continuing to wait, but SSH will likely fail..."
             else
               echo "Found instance: $INSTANCE_ID"
-              INSTANCE_STATE=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].State.Name' --output text --region us-east-1 2>/dev/null || echo "unknown")
-              echo "Instance state: $INSTANCE_STATE"
+              INSTANCE_INFO=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region us-east-1 --query 'Reservations[0].Instances[0]' 2>/dev/null || echo "{}")
+              INSTANCE_STATE=$(echo "$INSTANCE_INFO" | grep -o '"Name": "[^"]*"' | head -1 | cut -d'"' -f4 || echo "unknown")
+              INSTANCE_PUBLIC_IP=$(echo "$INSTANCE_INFO" | grep -o '"PublicIpAddress": "[^"]*"' | head -1 | cut -d'"' -f4 || echo "none")
+              INSTANCE_STATUS=$(aws ec2 describe-instance-status --instance-ids "$INSTANCE_ID" --region us-east-1 --query 'InstanceStatuses[0].InstanceStatus.Status' --output text 2>/dev/null || echo "unknown")
+              SYSTEM_STATUS=$(aws ec2 describe-instance-status --instance-ids "$INSTANCE_ID" --region us-east-1 --query 'InstanceStatuses[0].SystemStatus.Status' --output text 2>/dev/null || echo "unknown")
+              
+              echo "  Instance state: $INSTANCE_STATE"
+              echo "  Public IP: $INSTANCE_PUBLIC_IP"
+              echo "  Instance status: $INSTANCE_STATUS"
+              echo "  System status: $SYSTEM_STATUS"
+              
+              if [ "$INSTANCE_STATE" != "running" ]; then
+                echo "  ⚠ Instance is not in 'running' state. SSH will not work until it's running."
+              fi
+              
+              if [ "$INSTANCE_PUBLIC_IP" != "$IP" ] && [ "$INSTANCE_PUBLIC_IP" != "none" ] && [ "$INSTANCE_PUBLIC_IP" != "null" ]; then
+                echo "  ⚠ WARNING: Instance public IP ($INSTANCE_PUBLIC_IP) doesn't match expected IP ($IP)"
+                echo "  This may cause SSH connection failures."
+              fi
+              
+              # Check security group
+              SG_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text --region us-east-1 2>/dev/null || echo "")
+              if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
+                echo "  Security group: $SG_ID"
+                SSH_RULES=$(aws ec2 describe-security-groups --group-ids "$SG_ID" --query 'SecurityGroups[0].IpPermissions[?FromPort==`22`]' --output json --region us-east-1 2>/dev/null || echo "[]")
+                if [ "$SSH_RULES" == "[]" ] || [ -z "$SSH_RULES" ]; then
+                  echo "  ⚠ WARNING: Security group does NOT allow SSH on port 22!"
+                  echo "  This will prevent SSH connections. Check security group rules."
+                else
+                  echo "  ✓ Security group allows SSH on port 22"
+                fi
+              fi
             fi
             
             while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
