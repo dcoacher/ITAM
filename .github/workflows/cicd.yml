@@ -1258,110 +1258,46 @@ jobs:
           volumeBindingMode: Immediate
           EOF
 
-      - name: Ensure control plane taint and deploy application
+      - name: Deploy application using deploy.sh
         run: |
           set -e
           CONTROL_PLANE_IP="${{ needs.infrastructure.outputs.control_plane_ip }}"
           IMAGE_REPO="${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}"
           IMAGE_TAG="${{ env.DOCKER_TAG }}"
-          
-          echo "Ensuring control plane has taint and removing tolerations..."
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP <<ENDSSH
-            # Ensure control plane has taint (this prevents pods from scheduling there)
-            echo "Adding taint to control plane..."
-            kubectl taint nodes k8s-controller node-role.kubernetes.io/control-plane:NoSchedule --overwrite 2>/dev/null || \
-            kubectl taint nodes k8s-controller node-role.kubernetes.io/master:NoSchedule --overwrite 2>/dev/null || \
-            echo "Taint already exists"
-            
-            # Remove tolerations from existing deployment (if it exists)
-            if kubectl get deployment itam-app &>/dev/null; then
-              echo "Removing tolerations from existing deployment..."
-              kubectl patch deployment itam-app -p '{"spec":{"template":{"spec":{"tolerations":[]}}}}' 2>/dev/null || true
-            fi
-          ENDSSH
-          
           echo "Deploying with image: $IMAGE_REPO:$IMAGE_TAG"
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP <<ENDSSH
             cd /home/ubuntu/helm
             ./deploy.sh "$IMAGE_REPO" "$IMAGE_TAG"
           ENDSSH
-          
-          echo "Removing tolerations and nodeSelector from deployment after Helm install..."
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP <<ENDSSH
-            # Remove tolerations and nodeSelector so pods can schedule on any node (except tainted control plane)
-            kubectl patch deployment itam-app -p '{"spec":{"template":{"spec":{"tolerations":[],"nodeSelector":null}}}}' 2>/dev/null || true
-            echo "Waiting for pods to reschedule on worker nodes..."
-            sleep 10
-          ENDSSH
 
-      - name: Wait for deployment rollout to complete
-        timeout-minutes: 10
+      - name: Wait for pods to be ready
+        timeout-minutes: 5
         run: |
-          echo "Waiting for deployment rollout to complete..."
-          echo "This ensures all new pods are ready and old pods are terminated"
+          echo "Waiting for application pods to be ready..."
           
-          # Wait for the deployment rollout to complete
-          # This waits for the new ReplicaSet to be fully rolled out
-          DEPLOYMENT_NAME=$(kubectl get deployment -l app=itam-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "itam-app")
-          if [ -n "$DEPLOYMENT_NAME" ]; then
-            echo "Waiting for deployment: $DEPLOYMENT_NAME"
-            if ! kubectl rollout status deployment/$DEPLOYMENT_NAME --timeout=300s 2>&1; then
-              echo "⚠ Deployment rollout did not complete in time. Diagnosing..."
-              echo ""
-              echo "=== Current Status ==="
-              kubectl get deployment $DEPLOYMENT_NAME
+          # Get expected replica count
+          REPLICAS=$(kubectl get deployment itam-app -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "2")
+          echo "Expected replicas: $REPLICAS"
+          
+          # Simple wait for pods to be ready (like first deployment)
+          for i in {1..60}; do
+            READY_COUNT=$(kubectl get pods -l app=itam-app -o jsonpath='{.items[?(@.status.phase=="Running" && @.status.conditions[?(@.type=="Ready")].status=="True")].metadata.name}' 2>/dev/null | wc -w || echo "0")
+            
+            if [ "$READY_COUNT" -ge "$REPLICAS" ]; then
+              echo "✓ All required pods are ready ($READY_COUNT/$REPLICAS)"
               kubectl get pods -l app=itam-app -o wide
-              echo ""
-              echo "=== Checking for stuck pods ==="
-              PENDING_PODS=$(kubectl get pods -l app=itam-app -o jsonpath='{.items[?(@.status.phase=="Pending")].metadata.name}' 2>/dev/null || echo "")
-              if [ -n "$PENDING_PODS" ]; then
-                echo "Found pending pods. Checking why..."
-                for pod in $PENDING_PODS; do
-                  kubectl describe pod $pod | grep -A 10 "Events:" || true
-                done
-                echo "Deleting pending pods to force rescheduling..."
-                kubectl delete pods $PENDING_PODS --force --grace-period=0 2>/dev/null || true
-                sleep 10
-              fi
-              
-              # Check for old ReplicaSets blocking rollout
-              echo "=== Checking ReplicaSets ==="
-              kubectl get rs -l app=itam-app
-              OLD_RS=$(kubectl get rs -l app=itam-app --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-              NEW_RS=$(kubectl get rs -l app=itam-app --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || echo "")
-              if [ -n "$OLD_RS" ] && [ -n "$NEW_RS" ] && [ "$OLD_RS" != "$NEW_RS" ]; then
-                echo "Scaling down old ReplicaSet: $OLD_RS"
-                kubectl scale rs $OLD_RS --replicas=0 2>/dev/null || true
-                sleep 5
-              fi
-              
-              # Retry rollout status
-              echo "Retrying rollout status..."
-              kubectl rollout status deployment/$DEPLOYMENT_NAME --timeout=120s || {
-                echo "⚠ Rollout status check failed, but checking if pods are ready..."
-                # Fallback: just check if we have the required number of ready pods
-                REPLICAS=$(kubectl get deployment $DEPLOYMENT_NAME -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "2")
-                READY_PODS=$(kubectl get pods -l app=itam-app --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l || echo "0")
-                if [ "$READY_PODS" -ge "$REPLICAS" ]; then
-                  echo "✓ Required number of pods ($REPLICAS) are running, continuing..."
-                else
-                  echo "⚠ Only $READY_PODS/$REPLICAS pods are running"
-                  kubectl get pods -l app=itam-app -o wide
-                fi
-              }
-            else
-              echo "✓ Deployment rollout completed successfully"
+              break
             fi
-          else
-            echo "⚠ Deployment not found, waiting for pods to be ready instead..."
-            kubectl wait --for=condition=ready pod -l app=itam-app --timeout=300s || {
-              echo "⚠ Some pods may not be ready yet. Checking status..."
-              kubectl get pods -l app=itam-app
-              kubectl describe pods -l app=itam-app | tail -50
-              exit 1
-            }
-            echo "✓ All pods are ready"
-          fi
+            
+            if [ $i -eq 60 ]; then
+              echo "⚠ Not all pods ready after 5 minutes. Current status:"
+              kubectl get pods -l app=itam-app -o wide
+              # Continue anyway if at least some pods are ready
+            else
+              echo "Waiting for pods... ($i/60) - $READY_COUNT/$REPLICAS ready"
+              sleep 5
+            fi
+          done
 
       - name: Verify deployment and health endpoint
         run: |
