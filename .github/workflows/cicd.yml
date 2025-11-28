@@ -1,0 +1,165 @@
+# CICD Process (contains 3 phases)
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  DOCKER_IMAGE: itam-app
+  DOCKER_TAG: ${{ github.sha }}
+
+jobs:
+  # Phase 1: Test
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flask==3.0.0 pytest==8.2.1
+
+      - name: Run tests
+        run: |
+          pytest .github/workflows/tests/ -v --tb=short
+
+  # Phase 2: Build Docker Image
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
+            ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:latest
+          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:buildcache,mode=max
+
+  # Phase 3: Deploy to Kubernetes
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'latest'
+
+      - name: Set up kubeconfig for self-managed Kubernetes
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Verify Kubernetes connection
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Deploy NFS PersistentVolume
+        run: |
+          # Apply NFS PV (if not exists, create from control plane)
+          # You can also copy nfs-pv.yaml from control plane to repo
+          kubectl apply -f - <<EOF || true
+          apiVersion: v1
+          kind: PersistentVolume
+          metadata:
+            name: itam-nfs-pv
+            labels:
+              type: nfs
+          spec:
+            capacity:
+              storage: 10Gi
+            accessModes:
+              - ReadWriteMany
+            persistentVolumeReclaimPolicy: Retain
+            storageClassName: nfs-client
+            nfs:
+              path: /srv/nfs/k8s
+              server: 10.0.1.10
+            mountOptions:
+              - soft
+              - timeo=30
+              - retrans=3
+              - nfsvers=4.1
+          ---
+          apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: nfs-client
+          provisioner: kubernetes.io/no-provisioner
+          volumeBindingMode: Immediate
+          EOF
+
+      - name: Deploy application with Helm
+        run: |
+          # Option 1: If Helm chart is in repo (recommended)
+          if [ -d "./helm" ]; then
+            helm upgrade --install itam-app ./helm \
+              --set image.repository=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }} \
+              --set image.tag=${{ env.DOCKER_TAG }} \
+              --set image.pullPolicy=Always \
+              --namespace default \
+              --timeout 5m \
+              --wait
+          else
+            # Option 2: Use kubectl to update existing deployment
+            echo "Helm chart not found in repo. Updating deployment image..."
+            kubectl set image deployment/itam-app \
+              itam-app=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }} \
+              -n default
+            kubectl rollout status deployment/itam-app -n default --timeout=5m
+          fi
+
+      - name: Verify deployment
+        run: |
+          echo "=== Deployment Status ==="
+          kubectl get pods -l app=itam-app
+          kubectl get svc itam-app
+          echo ""
+          echo "✓ Deployment completed"
+          echo "Image deployed: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}"
