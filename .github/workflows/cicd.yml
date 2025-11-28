@@ -1279,9 +1279,24 @@ jobs:
           REPLICAS=$(kubectl get deployment itam-app -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "2")
           echo "Expected replicas: $REPLICAS"
           
+          # Show initial status
+          echo "=== Initial Pod Status ==="
+          kubectl get pods -l app=itam-app -o wide || echo "No pods found"
+          echo ""
+          
           # Simple wait for pods to be ready (like first deployment)
           for i in {1..60}; do
+            # Count ready pods
             READY_COUNT=$(kubectl get pods -l app=itam-app -o jsonpath='{.items[?(@.status.phase=="Running" && @.status.conditions[?(@.type=="Ready")].status=="True")].metadata.name}' 2>/dev/null | wc -w || echo "0")
+            
+            # Count total pods (any phase)
+            TOTAL_PODS=$(kubectl get pods -l app=itam-app --no-headers 2>/dev/null | wc -l || echo "0")
+            
+            # Count running pods (not necessarily ready)
+            RUNNING_COUNT=$(kubectl get pods -l app=itam-app -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' 2>/dev/null | wc -w || echo "0")
+            
+            # Count pending pods
+            PENDING_COUNT=$(kubectl get pods -l app=itam-app -o jsonpath='{.items[?(@.status.phase=="Pending")].metadata.name}' 2>/dev/null | wc -w || echo "0")
             
             if [ "$READY_COUNT" -ge "$REPLICAS" ]; then
               echo "✓ All required pods are ready ($READY_COUNT/$REPLICAS)"
@@ -1289,12 +1304,41 @@ jobs:
               break
             fi
             
+            # Show status every 6 attempts (30 seconds)
+            if [ $((i % 6)) -eq 0 ]; then
+              echo "Status check $i/60: Total=$TOTAL_PODS, Running=$RUNNING_COUNT, Ready=$READY_COUNT, Pending=$PENDING_COUNT"
+              kubectl get pods -l app=itam-app -o wide || true
+              
+              # If there are pending pods, show why
+              if [ "$PENDING_COUNT" -gt 0 ]; then
+                echo "=== Pending Pod Details ==="
+                PENDING_PODS=$(kubectl get pods -l app=itam-app -o jsonpath='{.items[?(@.status.phase=="Pending")].metadata.name}' 2>/dev/null || echo "")
+                for pod in $PENDING_PODS; do
+                  echo "Pod: $pod"
+                  kubectl describe pod $pod | grep -A 5 "Events:" || true
+                done
+              fi
+              
+              # If there are running but not ready pods, show why
+              if [ "$RUNNING_COUNT" -gt "$READY_COUNT" ]; then
+                echo "=== Running but not ready pods ==="
+                NOT_READY_PODS=$(kubectl get pods -l app=itam-app -o jsonpath='{.items[?(@.status.phase=="Running" && @.status.conditions[?(@.type=="Ready")].status!="True")].metadata.name}' 2>/dev/null || echo "")
+                for pod in $NOT_READY_PODS; do
+                  echo "Pod: $pod"
+                  kubectl describe pod $pod | grep -A 3 "Conditions:" || true
+                done
+              fi
+              echo ""
+            else
+              echo "Waiting for pods... ($i/60) - Ready: $READY_COUNT/$REPLICAS (Running: $RUNNING_COUNT, Pending: $PENDING_COUNT)"
+            fi
+            
             if [ $i -eq 60 ]; then
-              echo "⚠ Not all pods ready after 5 minutes. Current status:"
+              echo "⚠ Not all pods ready after 5 minutes. Final status:"
               kubectl get pods -l app=itam-app -o wide
+              kubectl get deployment itam-app
               # Continue anyway if at least some pods are ready
             else
-              echo "Waiting for pods... ($i/60) - $READY_COUNT/$REPLICAS ready"
               sleep 5
             fi
           done
