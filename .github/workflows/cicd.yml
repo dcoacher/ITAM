@@ -1,4 +1,4 @@
-# CICD Process (contains 3 phases)
+# CICD Process (contains multiple phases)
 name: CI/CD Pipeline
 
 on:
@@ -92,8 +92,47 @@ jobs:
       - name: Set up kubeconfig for self-managed Kubernetes
         run: |
           mkdir -p ~/.kube
-          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+          # Decode base64 and write to config file
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config || {
+            echo "ERROR: Failed to decode KUBECONFIG secret"
+            echo "Please verify the secret is properly base64 encoded"
+            exit 1
+          }
           chmod 600 ~/.kube/config
+          # Verify the config file is valid YAML
+          if ! kubectl --kubeconfig ~/.kube/config config view &>/dev/null; then
+            echo "ERROR: Invalid kubeconfig format"
+            echo "First few lines of decoded config:"
+            head -5 ~/.kube/config || true
+            exit 1
+          fi
+          # Show current server URL before replacement
+          echo "Current kubeconfig server:"
+          kubectl --kubeconfig ~/.kube/config config view --minify -o jsonpath='{.clusters[0].cluster.server}' || true
+          echo ""
+          # Replace private IP (10.0.1.10) with public IP
+          PUBLIC_IP="${{ secrets.KUBERNETES_PUBLIC_IP }}"
+          if [ -z "$PUBLIC_IP" ]; then
+            echo "WARNING: KUBERNETES_PUBLIC_IP secret not set"
+            echo "Trying to extract from kubeconfig or use default..."
+            # Try to get public IP from Terraform output or use a placeholder
+            PUBLIC_IP="REPLACE_WITH_PUBLIC_IP"
+          fi
+          if [ "$PUBLIC_IP" != "REPLACE_WITH_PUBLIC_IP" ]; then
+            echo "Updating kubeconfig to use public IP: $PUBLIC_IP"
+            # Replace all variations of private IP
+            sed -i "s|10.0.1.10:6443|$PUBLIC_IP:6443|g" ~/.kube/config
+            sed -i "s|https://10.0.1.10:6443|https://$PUBLIC_IP:6443|g" ~/.kube/config
+            sed -i "s|server: https://10.0.1.10:6443|server: https://$PUBLIC_IP:6443|g" ~/.kube/config
+            # Verify replacement
+            echo "Updated kubeconfig server:"
+            kubectl --kubeconfig ~/.kube/config config view --minify -o jsonpath='{.clusters[0].cluster.server}' || true
+            echo ""
+          else
+            echo "ERROR: KUBERNETES_PUBLIC_IP secret must be set"
+            echo "Please add KUBERNETES_PUBLIC_IP secret with your control plane public IP"
+            exit 1
+          fi
 
       - name: Verify Kubernetes connection
         run: |
@@ -163,3 +202,4 @@ jobs:
           echo ""
           echo "✓ Deployment completed"
           echo "Image deployed: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}"
+
