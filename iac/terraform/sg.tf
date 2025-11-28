@@ -23,11 +23,19 @@ resource "aws_security_group" "ITAM-EC2-SG" {
   }
 
   ingress {
-    description = "Kubernetes API Server"
+    description = "Kubernetes API Server (from VPC)"
     from_port   = 6443
     to_port     = 6443
     protocol    = "tcp"
     cidr_blocks = [aws_vpc.ITAM-VPC.cidr_block]
+  }
+
+    ingress {
+    description = "Kubernetes API Server (from Internet)"
+    from_port   = 6443
+    to_port     = 6443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
