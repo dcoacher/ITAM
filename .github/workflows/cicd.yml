@@ -1293,11 +1293,13 @@ jobs:
           
           # If pods are on control plane, delete them to force rescheduling (taint should prevent them from going back)
           echo "Checking if any pods are on control plane..."
-          PODS_ON_CP=\$(kubectl get pods -l app=itam-app -o wide --no-headers 2>/dev/null | grep "k8s-controller" | awk '{print \$1}' || echo "")
-          if [ -n "\$PODS_ON_CP" ]; then
-            echo "Found pods on control plane (shouldn't happen with taint), deleting them: \$PODS_ON_CP"
-            for pod in \$PODS_ON_CP; do
-              kubectl delete pod \$pod --grace-period=0 --force 2>/dev/null || true
+          PODS_ON_CP=$(kubectl get pods -l app=itam-app -o wide --no-headers 2>/dev/null | grep "k8s-controller" | awk '{print $1}' || echo "")
+          if [ -n "$PODS_ON_CP" ]; then
+            echo "Found pods on control plane (shouldn't happen with taint), deleting them..."
+            echo "$PODS_ON_CP" | while read -r pod; do
+              if [ -n "$pod" ]; then
+                kubectl delete pod "$pod" --grace-period=0 --force 2>/dev/null || true
+              fi
             done
             echo "Waiting for pods to reschedule on worker nodes..."
             sleep 15
