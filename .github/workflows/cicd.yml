@@ -197,6 +197,15 @@ jobs:
             terraform import aws_lb_target_group.ITAM-TG "$TG_ARN" || echo "Target Group import failed"
           fi
           
+          # Import ALB Listener (if it exists)
+          if [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ]; then
+            LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" --region us-east-1 --query 'Listeners[0].ListenerArn' --output text 2>/dev/null || echo "")
+            if [ -n "$LISTENER_ARN" ] && [ "$LISTENER_ARN" != "None" ] && ! terraform state show aws_lb_listener.ITAM-ALB-LISTENER &>/dev/null 2>&1; then
+              echo "Importing ALB Listener..."
+              terraform import aws_lb_listener.ITAM-ALB-LISTENER "$LISTENER_ARN" || echo "Listener import failed"
+            fi
+          fi
+          
           # Note: Target group attachments cannot be imported via Terraform
           # They will be handled by the "Ensure Target Group Attachments" step
           
@@ -362,12 +371,19 @@ jobs:
             fi
           fi
 
-      - name: Ensure Target Group Attachments
+      - name: Ensure ALB Listener and Target Group Attachments
         working-directory: iac/terraform
         continue-on-error: true
         if: steps.terraform-plan.outputs.has_changes != 'true'
         run: |
-          echo "Ensuring worker nodes are registered in the target group..."
+          echo "Ensuring ALB listener is configured and worker nodes are registered..."
+          
+          # Get ALB ARN
+          ALB_ARN=$(aws elbv2 describe-load-balancers --names itam-alb --region us-east-1 --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
+          if [ -z "$ALB_ARN" ] || [ "$ALB_ARN" == "None" ]; then
+            echo "ALB not found. Skipping listener and target registration."
+            exit 0
+          fi
           
           # Get target group ARN
           TG_ARN=$(aws elbv2 describe-target-groups --names itam-tg --region us-east-1 --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
@@ -375,6 +391,33 @@ jobs:
             echo "Target group not found. Skipping target registration."
             exit 0
           fi
+          
+          # Check if listener exists and is configured correctly
+          LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" --region us-east-1 --query 'Listeners[0].ListenerArn' --output text 2>/dev/null || echo "")
+          if [ -z "$LISTENER_ARN" ] || [ "$LISTENER_ARN" == "None" ]; then
+            echo "ALB Listener not found. Creating listener..."
+            aws elbv2 create-listener \
+              --load-balancer-arn "$ALB_ARN" \
+              --protocol HTTP \
+              --port 80 \
+              --default-actions Type=forward,TargetGroupArn="$TG_ARN" \
+              --region us-east-1 && echo "✓ Listener created" || echo "✗ Failed to create listener"
+          else
+            # Verify listener is forwarding to the correct target group
+            LISTENER_TG=$(aws elbv2 describe-listeners --listener-arns "$LISTENER_ARN" --region us-east-1 --query 'Listeners[0].DefaultActions[0].TargetGroupArn' --output text 2>/dev/null || echo "")
+            if [ "$LISTENER_TG" != "$TG_ARN" ]; then
+              echo "Listener is not forwarding to the correct target group. Updating listener..."
+              aws elbv2 modify-listener \
+                --listener-arn "$LISTENER_ARN" \
+                --default-actions Type=forward,TargetGroupArn="$TG_ARN" \
+                --region us-east-1 && echo "✓ Listener updated" || echo "✗ Failed to update listener"
+            else
+              echo "✓ Listener is correctly configured"
+            fi
+          fi
+          
+          echo ""
+          echo "Ensuring worker nodes are registered in the target group..."
           
           # Get worker instance IDs from Terraform state
           WORKER1_ID=$(terraform state show aws_instance.WORKER-1 2>/dev/null | grep "id " | head -1 | awk '{print $3}' | tr -d '"' || echo "")
