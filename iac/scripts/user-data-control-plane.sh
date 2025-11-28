@@ -207,7 +207,7 @@ EOF
 cat <<'EOF' >/home/ubuntu/helm/values.yaml
 replicaCount: 2
 image:
-  repository: docker.io/dcoacher/itam-app
+  repository: docker.io/${docker_repo}/itam-app
   tag: "latest"
   pullPolicy: Always
 service:

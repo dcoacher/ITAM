@@ -34,6 +34,11 @@ variable "instance_type" {
   type        = string
 }
 
+variable "docker_repo" {
+  description = "Docker Hub username for the container image"
+  type        = string
+}
+
 # variable "allowed_ip" {
 #   description = "Your IP address, allowed for SSH access"
 #   type        = string
@@ -41,7 +46,9 @@ variable "instance_type" {
 
 # Ansible User-Data Script for K8s Control Plane
 locals {
-  ansible_control_plane_user_data = file("${path.module}/../scripts/user-data-control-plane.sh")
+  ansible_control_plane_user_data = templatefile("${path.module}/../scripts/user-data-control-plane.sh", {
+    docker_username = var.docker_repo
+  })
 }
 
 # Ansible User-Data Script for K8s Workers
