@@ -270,8 +270,6 @@ spec:
           labels:
             app: {{ .Chart.Name }}
         spec:
-          nodeSelector:
-            node-type: worker
           containers:
       - name: {{ .Chart.Name }}
         image: {{ .Values.image.repository }}:{{ .Values.image.tag }}

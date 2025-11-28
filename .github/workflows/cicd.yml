@@ -1258,39 +1258,16 @@ jobs:
           volumeBindingMode: Immediate
           EOF
 
-      - name: Ensure control plane taint and label worker nodes
+      - name: Ensure control plane taint
         run: |
           CONTROL_PLANE_IP="${{ needs.infrastructure.outputs.control_plane_ip }}"
-          echo "Ensuring control plane taint and labeling worker nodes..."
+          echo "Ensuring control plane has taint (this prevents pods from scheduling there)..."
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP <<ENDSSH
-            echo "=== Current node status ==="
-            kubectl get nodes -o wide
-            echo ""
-            
-            # Ensure control plane has taint and remove worker label if present
-            echo "Configuring control plane node..."
+            # Ensure control plane has taint - this is the key to prevent pod scheduling
             kubectl taint nodes k8s-controller node-role.kubernetes.io/control-plane:NoSchedule --overwrite 2>/dev/null || \
             kubectl taint nodes k8s-controller node-role.kubernetes.io/master:NoSchedule --overwrite 2>/dev/null || \
             echo "Taint already exists"
-            kubectl label nodes k8s-controller node-type=control-plane --overwrite 2>/dev/null || true
-            kubectl label nodes k8s-controller node-type- 2>/dev/null || true  # Remove worker label if exists
             
-            # Label all other nodes as workers
-            echo "Labeling worker nodes..."
-            WORKER_NODES=\$(kubectl get nodes -o jsonpath='{.items[?(@.metadata.name!="k8s-controller")].metadata.name}')
-            if [ -z "\$WORKER_NODES" ]; then
-              echo "⚠ No worker nodes found!"
-            else
-              for node in \$WORKER_NODES; do
-                echo "Labeling node: \$node"
-                kubectl label nodes \$node node-type=worker --overwrite 2>/dev/null || true
-              done
-            fi
-            
-            echo ""
-            echo "=== Node labels after configuration ==="
-            kubectl get nodes --show-labels
-            echo ""
             echo "=== Node taints ==="
             kubectl describe nodes | grep -A 2 "Taints:" || echo "No taints found"
           ENDSSH
@@ -1306,7 +1283,7 @@ jobs:
             cd /home/ubuntu/helm
             ./deploy.sh "$IMAGE_REPO" "$IMAGE_TAG"
           ENDSSH
-          
+
           echo "Waiting a moment for deployment to settle..."
           sleep 15
           
@@ -1314,60 +1291,21 @@ jobs:
           kubectl get pods -l app=itam-app -o wide || echo "No pods found"
           kubectl get deployment itam-app || echo "Deployment not found"
           
-          # Patch deployment to add nodeSelector for worker nodes
-          echo "Adding nodeSelector to ensure pods schedule on worker nodes..."
-          kubectl patch deployment itam-app -p '{"spec":{"template":{"spec":{"nodeSelector":{"node-type":"worker"}}}}}' || echo "Failed to patch deployment"
-          
-          echo "Deleting pods on control plane to force rescheduling on worker nodes..."
+          # If pods are on control plane, delete them to force rescheduling (taint should prevent them from going back)
+          echo "Checking if any pods are on control plane..."
           PODS_ON_CP=\$(kubectl get pods -l app=itam-app -o wide --no-headers 2>/dev/null | grep "k8s-controller" | awk '{print \$1}' || echo "")
           if [ -n "\$PODS_ON_CP" ]; then
-            echo "Found pods on control plane, deleting them: \$PODS_ON_CP"
+            echo "Found pods on control plane (shouldn't happen with taint), deleting them: \$PODS_ON_CP"
             for pod in \$PODS_ON_CP; do
               kubectl delete pod \$pod --grace-period=0 --force 2>/dev/null || true
             done
+            echo "Waiting for pods to reschedule on worker nodes..."
+            sleep 15
           fi
-          
-          echo "Waiting for pods to reschedule on worker nodes..."
-          echo "This may take up to 2 minutes..."
-          for i in {1..24}; do
-            PENDING=\$(kubectl get pods -l app=itam-app -o jsonpath='{.items[?(@.status.phase=="Pending")].metadata.name}' 2>/dev/null | wc -w || echo "0")
-            RUNNING_ON_WORKERS=\$(kubectl get pods -l app=itam-app -o wide --no-headers 2>/dev/null | grep -v "k8s-controller" | grep "Running" | wc -l || echo "0")
-            RUNNING_ON_CP=\$(kubectl get pods -l app=itam-app -o wide --no-headers 2>/dev/null | grep "k8s-controller" | grep "Running" | wc -l || echo "0")
-            READY_ON_WORKERS=\$(kubectl get pods -l app=itam-app -o wide --no-headers 2>/dev/null | grep -v "k8s-controller" | grep "Running" | grep -c "1/1" || echo "0")
-            
-            if [ "\$READY_ON_WORKERS" -ge "2" ] && [ "\$RUNNING_ON_CP" -eq "0" ]; then
-              echo "✓ All pods are now ready on worker nodes"
-              break
-            fi
-            
-            if [ \$i -eq 24 ]; then
-              echo "⚠ Timeout waiting for pods to reschedule"
-            else
-              echo "Waiting... (\$i/24) - Ready on Workers: \$READY_ON_WORKERS/2, Running on CP: \$RUNNING_ON_CP, Pending: \$PENDING"
-              sleep 5
-            fi
-          done
           
           echo ""
           echo "=== Final pod distribution ==="
           kubectl get pods -l app=itam-app -o wide
-          
-          # Show why pending pods can't schedule
-          PENDING_PODS=\$(kubectl get pods -l app=itam-app -o jsonpath='{.items[?(@.status.phase=="Pending")].metadata.name}' 2>/dev/null || echo "")
-          if [ -n "\$PENDING_PODS" ]; then
-            echo ""
-            echo "=== Pending pods details ==="
-            for pod in \$PENDING_PODS; do
-              echo "Pod: \$pod"
-              kubectl describe pod \$pod | grep -A 10 "Events:" || true
-              echo ""
-            done
-          fi
-          
-          # Verify worker nodes are labeled
-          echo ""
-          echo "=== Worker node labels ==="
-          kubectl get nodes -l node-type=worker --show-labels || echo "No worker nodes found with label"
 
       - name: Verify deployment and health endpoint
         run: |
