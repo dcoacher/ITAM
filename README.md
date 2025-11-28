@@ -24,6 +24,8 @@ Architecture Evolution of the Project:
 ### Project Files
 - :file_folder: *`.github`* folder contains CICD workflows
     - :file_folder: *`workflows`* subfolder contains CICD pipelines file
+        - :file_folder: *`testss`* subfolder contains test file for CICD process
+            - :page_facing_up: *`test_main.py`* test file for CICD pipelines
         - :page_facing_up: *`cicd.yml`* CICD pipelines
 - :file_folder: *`app`* folder contains all application data
     - :file_folder: *`dummy-data`* subfolder contains dummy data JSON files
