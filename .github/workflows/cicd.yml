@@ -233,10 +233,10 @@ jobs:
           # Wait for API server to respond
           echo "Step 3: Waiting for API server to respond..."
           for i in {1..60}; do
-            if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/etc/kubernetes/admin.conf cluster-info &>/dev/null" 2>/dev/null; then
+            if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/home/ubuntu/.kube/config cluster-info &>/dev/null" 2>/dev/null; then
               echo "✓ Kubernetes API server is ready and responding"
               # Show cluster info
-              ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/etc/kubernetes/admin.conf cluster-info" || true
+              ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/home/ubuntu/.kube/config cluster-info" || true
               break
             fi
             if [ $i -eq 60 ]; then
@@ -291,8 +291,8 @@ jobs:
           CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
           echo "Waiting for all nodes to join the cluster..."
           for i in {1..30}; do
-            NODE_COUNT=$(ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes --no-headers 2>/dev/null | wc -l" || echo "0")
-            READY_COUNT=$(ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes --no-headers 2>/dev/null | grep -c Ready || echo '0'")
+            NODE_COUNT=$(ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/home/ubuntu/.kube/config get nodes --no-headers 2>/dev/null | wc -l" || echo "0")
+            READY_COUNT=$(ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/home/ubuntu/.kube/config get nodes --no-headers 2>/dev/null | grep -c Ready || echo '0'")
             echo "Nodes: $READY_COUNT/$NODE_COUNT ready (attempt $i/30)"
             if [ "$NODE_COUNT" -ge "3" ] && [ "$READY_COUNT" -ge "3" ]; then
               echo "All nodes are ready!"
@@ -301,7 +301,7 @@ jobs:
             sleep 10
           done
           # Show node status
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes"
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/home/ubuntu/.kube/config get nodes"
 
 
   # Phase 4: Deploy to Kubernetes
