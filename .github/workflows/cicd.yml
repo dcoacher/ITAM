@@ -1270,11 +1270,55 @@ jobs:
             ./deploy.sh "$IMAGE_REPO" "$IMAGE_TAG"
           ENDSSH
 
-      - name: Verify deployment
+      - name: Wait for pods to be ready
+        timeout-minutes: 5
+        run: |
+          echo "Waiting for application pods to be ready..."
+          kubectl wait --for=condition=ready pod -l app=itam-app --timeout=300s || {
+            echo "⚠ Some pods may not be ready yet. Checking status..."
+            kubectl get pods -l app=itam-app
+            kubectl describe pods -l app=itam-app | tail -50
+            exit 1
+          }
+          echo "✓ All pods are ready"
+
+      - name: Verify deployment and health endpoint
         run: |
           echo "=== Deployment Status ==="
           kubectl get pods -l app=itam-app
           kubectl get svc itam-app
+          echo ""
+          
+          # Get pod name and verify health endpoint
+          POD_NAME=$(kubectl get pods -l app=itam-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          if [ -n "$POD_NAME" ]; then
+            echo "Testing health endpoint on pod: $POD_NAME"
+            for i in {1..10}; do
+              if kubectl exec "$POD_NAME" -- curl -s http://localhost:31415/health > /dev/null 2>&1; then
+                echo "✓ Health endpoint is responding"
+                kubectl exec "$POD_NAME" -- curl -s http://localhost:31415/health
+                break
+              else
+                if [ $i -eq 10 ]; then
+                  echo "⚠ Health endpoint not responding after 10 attempts"
+                  echo "Checking pod logs..."
+                  kubectl logs "$POD_NAME" --tail=50 || true
+                else
+                  echo "Waiting for health endpoint... ($i/10)"
+                  sleep 3
+                fi
+              fi
+            done
+          fi
+          
+          # Verify NodePort service
+          NODEPORT=$(kubectl get svc itam-app -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "")
+          if [ "$NODEPORT" == "31415" ]; then
+            echo "✓ NodePort service is configured correctly (port 31415)"
+          else
+            echo "⚠ NodePort is $NODEPORT (expected 31415)"
+          fi
+          
           echo ""
           echo "✓ Deployment completed"
           echo "Image deployed: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}"
