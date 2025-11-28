@@ -114,762 +114,58 @@ jobs:
         working-directory: iac/terraform
         run: terraform init
 
-      - name: Check if infrastructure exists in AWS and import (BEFORE plan)
-        working-directory: iac/terraform
-        continue-on-error: true
-        run: |
-          echo "Checking if infrastructure already exists in AWS..."
-          echo "This step imports existing resources into Terraform state to prevent duplicates"
-          
-          # Get VPC ID first (needed for other resources)
-          VPC_ID=$(aws ec2 describe-vpcs --filters 'Name=tag:Name,Values=itam-vpc' --query 'Vpcs[0].VpcId' --output text --region us-east-1 2>/dev/null || echo "")
-          if [ -z "$VPC_ID" ] || [ "$VPC_ID" == "None" ]; then
-            echo "VPC not found in AWS. This appears to be a fresh deployment."
-            echo "infrastructure_exists_in_aws=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          echo "Found VPC: $VPC_ID"
-          echo "infrastructure_exists_in_aws=true" >> $GITHUB_OUTPUT
-          
-          # Import VPC if not in state
-          if ! terraform state show aws_vpc.ITAM-VPC &>/dev/null 2>&1; then
-            echo "Importing VPC into Terraform state..."
-            terraform import aws_vpc.ITAM-VPC "$VPC_ID" || echo "VPC import failed or already in state"
-          fi
-          
-          # Import subnets
-          SUBNET1_ID=$(aws ec2 describe-subnets --filters "Name=tag:Name,Values=itam-public-subnet-1" "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[0].SubnetId' --output text --region us-east-1 2>/dev/null || echo "")
-          if [ -n "$SUBNET1_ID" ] && [ "$SUBNET1_ID" != "None" ] && ! terraform state show aws_subnet.ITAM-Public-Subnet-1 &>/dev/null 2>&1; then
-            echo "Importing Public Subnet 1..."
-            terraform import aws_subnet.ITAM-Public-Subnet-1 "$SUBNET1_ID" || echo "Subnet 1 import failed"
-          fi
-          
-          SUBNET2_ID=$(aws ec2 describe-subnets --filters "Name=tag:Name,Values=itam-public-subnet-2" "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[0].SubnetId' --output text --region us-east-1 2>/dev/null || echo "")
-          if [ -n "$SUBNET2_ID" ] && [ "$SUBNET2_ID" != "None" ] && ! terraform state show aws_subnet.ITAM-Public-Subnet-2 &>/dev/null 2>&1; then
-            echo "Importing Public Subnet 2..."
-            terraform import aws_subnet.ITAM-Public-Subnet-2 "$SUBNET2_ID" || echo "Subnet 2 import failed"
-          fi
-          
-          # Import security groups
-          ALB_SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=itam-alb-sg" "Name=vpc-id,Values=$VPC_ID" --region us-east-1 --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
-          if [ -n "$ALB_SG_ID" ] && [ "$ALB_SG_ID" != "None" ] && ! terraform state show aws_security_group.ITAM-ALB-SG &>/dev/null 2>&1; then
-            echo "Importing ALB security group..."
-            terraform import aws_security_group.ITAM-ALB-SG "$ALB_SG_ID" || echo "ALB SG import failed"
-          fi
-          
-          EC2_SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=itam-ec2-sg" "Name=vpc-id,Values=$VPC_ID" --region us-east-1 --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
-          if [ -n "$EC2_SG_ID" ] && [ "$EC2_SG_ID" != "None" ] && ! terraform state show aws_security_group.ITAM-EC2-SG &>/dev/null 2>&1; then
-            echo "Importing EC2 security group..."
-            terraform import aws_security_group.ITAM-EC2-SG "$EC2_SG_ID" || echo "EC2 SG import failed"
-          fi
-          
-          # Import EC2 instances
-          CONTROL_PLANE_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=itam-control-plane" "Name=instance-state-name,Values=running,stopped" --query 'Reservations[0].Instances[0].InstanceId' --output text --region us-east-1 2>/dev/null || echo "")
-          if [ -n "$CONTROL_PLANE_ID" ] && [ "$CONTROL_PLANE_ID" != "None" ] && ! terraform state show aws_instance.CONTROL-PLANE &>/dev/null 2>&1; then
-            echo "Importing Control Plane instance..."
-            terraform import aws_instance.CONTROL-PLANE "$CONTROL_PLANE_ID" || echo "Control Plane import failed"
-          fi
-          
-          WORKER1_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=itam-worker-1" "Name=instance-state-name,Values=running,stopped" --query 'Reservations[0].Instances[0].InstanceId' --output text --region us-east-1 2>/dev/null || echo "")
-          if [ -n "$WORKER1_ID" ] && [ "$WORKER1_ID" != "None" ] && ! terraform state show aws_instance.WORKER-1 &>/dev/null 2>&1; then
-            echo "Importing Worker 1 instance..."
-            terraform import aws_instance.WORKER-1 "$WORKER1_ID" || echo "Worker 1 import failed"
-          fi
-          
-          WORKER2_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=itam-worker-2" "Name=instance-state-name,Values=running,stopped" --query 'Reservations[0].Instances[0].InstanceId' --output text --region us-east-1 2>/dev/null || echo "")
-          if [ -n "$WORKER2_ID" ] && [ "$WORKER2_ID" != "None" ] && ! terraform state show aws_instance.WORKER-2 &>/dev/null 2>&1; then
-            echo "Importing Worker 2 instance..."
-            terraform import aws_instance.WORKER-2 "$WORKER2_ID" || echo "Worker 2 import failed"
-          fi
-          
-          # Import ALB
-          ALB_ARN=$(aws elbv2 describe-load-balancers --names itam-alb --region us-east-1 --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
-          if [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ] && ! terraform state show aws_lb.ITAM-ALB &>/dev/null 2>&1; then
-            echo "Importing ALB..."
-            terraform import aws_lb.ITAM-ALB "$ALB_ARN" || echo "ALB import failed"
-          fi
-          
-          # Import Target Group
-          TG_ARN=$(aws elbv2 describe-target-groups --names itam-tg --region us-east-1 --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
-          if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ] && ! terraform state show aws_lb_target_group.ITAM-TG &>/dev/null 2>&1; then
-            echo "Importing Target Group..."
-            terraform import aws_lb_target_group.ITAM-TG "$TG_ARN" || echo "Target Group import failed"
-          fi
-          
-          # Import ALB Listener (if it exists)
-          if [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ]; then
-            LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" --region us-east-1 --query 'Listeners[0].ListenerArn' --output text 2>/dev/null || echo "")
-            if [ -n "$LISTENER_ARN" ] && [ "$LISTENER_ARN" != "None" ] && ! terraform state show aws_lb_listener.ITAM-ALB-LISTENER &>/dev/null 2>&1; then
-              echo "Importing ALB Listener..."
-              terraform import aws_lb_listener.ITAM-ALB-LISTENER "$LISTENER_ARN" || echo "Listener import failed"
-            fi
-          fi
-          
-          # Note: Target group attachments cannot be imported via Terraform
-          # They will be handled by the "Ensure Target Group Attachments" step
-          
-          echo "Import step completed. Running terraform refresh to sync state..."
-          terraform refresh || echo "Refresh completed"
-
       - name: Terraform Plan
-        id: terraform-plan
         working-directory: iac/terraform
-        run: |
-          set +e
-          terraform plan -out=tfplan -detailed-exitcode
-          PLAN_EXIT_CODE=$?
-          set -e
-          if [ $PLAN_EXIT_CODE -eq 0 ]; then
-            echo "No changes needed. Infrastructure is up to date."
-            echo "infrastructure_exists=true" >> $GITHUB_OUTPUT
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          elif [ $PLAN_EXIT_CODE -eq 1 ]; then
-            echo "ERROR: Terraform plan failed"
-            exit 1
-          elif [ $PLAN_EXIT_CODE -eq 2 ]; then
-            echo "Changes detected. Infrastructure needs to be created or updated."
-            echo "infrastructure_exists=false" >> $GITHUB_OUTPUT
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-          else
-            echo "ERROR: Unexpected exit code: $PLAN_EXIT_CODE"
-            exit 1
-          fi
-
-      - name: Check if outputs exist in state
-        id: check-outputs
-        working-directory: iac/terraform
-        run: |
-          # Check if public IP outputs exist in Terraform state
-          # Public IPs might be null if instances don't have public IPs assigned
-          CONTROL_PLANE_OUTPUT=$(terraform output -raw CONTROL-PLANE-PUBLIC-IP 2>&1 || echo "")
-          if [ -n "$CONTROL_PLANE_OUTPUT" ] && [ "$CONTROL_PLANE_OUTPUT" != "null" ] && \
-             echo "$CONTROL_PLANE_OUTPUT" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"; then
-            echo "Public IP outputs exist in Terraform state"
-            echo "outputs_exist=true" >> $GITHUB_OUTPUT
-          else
-            echo "Public IP outputs not found or are null in Terraform state"
-            echo "This may mean instances don't have public IPs assigned"
-            echo "outputs_exist=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Verify infrastructure state after import
-        working-directory: iac/terraform
-        continue-on-error: true
-        run: |
-          echo "Verifying that all existing resources are in Terraform state..."
-          echo "This prevents Terraform from trying to create duplicates"
-          
-          # Check key pair (special handling needed)
-          if aws ec2 describe-key-pairs --key-names itam-keypair --region us-east-1 &>/dev/null 2>&1 && ! terraform state show aws_key_pair.ITAM-KP &>/dev/null 2>&1; then
-            echo "WARNING: Key pair 'itam-keypair' exists in AWS but not in Terraform state."
-            echo "The key pair will be recreated with a new key. If this causes issues:"
-            echo "1. Delete the existing key pair: aws ec2 delete-key-pair --key-name itam-keypair --region us-east-1"
-            echo "2. Or manually import it if the public key matches"
-            echo "Attempting to delete existing key pair to allow recreation..."
-            aws ec2 delete-key-pair --key-name itam-keypair --region us-east-1 2>/dev/null || echo "Could not delete key pair (may need manual deletion)"
-          fi
-          
-          # List what's in state vs what exists in AWS
-          echo ""
-          echo "Resources in Terraform state:"
-          terraform state list 2>/dev/null | head -20 || echo "No resources in state"
-
-      - name: Handle stuck resources (if any)
-        working-directory: iac/terraform
-        continue-on-error: true
-        run: |
-          echo "Checking for stuck resources that might block Terraform apply..."
-          
-          # Check if target group exists and is stuck
-          TG_ARN=$(aws elbv2 describe-target-groups --names itam-tg --region us-east-1 --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
-          if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
-            echo "Target group found: $TG_ARN"
-            
-            # Get ALB ARN
-            ALB_ARN=$(aws elbv2 describe-load-balancers --names itam-alb --region us-east-1 --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
-            
-            if [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ]; then
-              # Get listener ARN and check if target group is attached
-              LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" --region us-east-1 --query 'Listeners[0].ListenerArn' --output text 2>/dev/null || echo "")
-              
-              if [ -n "$LISTENER_ARN" ] && [ "$LISTENER_ARN" != "None" ]; then
-                # Check if listener uses this target group
-                LISTENER_TG=$(aws elbv2 describe-listeners --listener-arns "$LISTENER_ARN" --region us-east-1 --query 'Listeners[0].DefaultActions[0].TargetGroupArn' --output text 2>/dev/null || echo "")
-                
-                if [ "$LISTENER_TG" == "$TG_ARN" ]; then
-                  echo "Target group is attached to listener. Removing attachment to allow deletion..."
-                  # Delete the listener (it will be recreated by Terraform)
-                  aws elbv2 delete-listener --listener-arn "$LISTENER_ARN" --region us-east-1 2>/dev/null || echo "Could not delete listener (may not be necessary)"
-                fi
-              fi
-              
-              # Deregister all targets from target group
-              echo "Deregistering all targets from target group..."
-              TARGETS=$(aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region us-east-1 --query 'TargetHealthDescriptions[*].Target.Id' --output text 2>/dev/null || echo "")
-              if [ -n "$TARGETS" ] && [ "$TARGETS" != "None" ]; then
-                for TARGET in $TARGETS; do
-                  if [ -n "$TARGET" ] && [ "$TARGET" != "None" ]; then
-                    echo "Deregistering target: $TARGET"
-                    aws elbv2 deregister-targets --target-group-arn "$TG_ARN" --targets Id="$TARGET" --region us-east-1 2>/dev/null || echo "Could not deregister target $TARGET"
-                  fi
-                done
-                # Wait a moment for deregistration to complete
-                sleep 5
-              fi
-              
-              # Now try to delete the target group if it's not in Terraform state
-              if ! terraform state show aws_lb_target_group.ITAM-TG &>/dev/null 2>&1; then
-                echo "Target group not in Terraform state. Attempting to delete..."
-                aws elbv2 delete-target-group --target-group-arn "$TG_ARN" --region us-east-1 2>/dev/null || echo "Could not delete target group (may need to wait or handle manually)"
-              fi
-            fi
-          fi
-
-      - name: Wait for control plane to be SSH-ready (if creating new instances)
-        working-directory: iac/terraform
-        continue-on-error: true
-        run: |
-          # Only wait if we're creating new instances
-          if [ "${{ steps.terraform-plan.outputs.has_changes }}" == "true" ]; then
-            echo "Waiting for control plane instance to be SSH-ready..."
-            # Get control plane IP from state (if instance already exists)
-            CONTROL_PLANE_IP=$(terraform output -raw CONTROL-PLANE-PUBLIC-IP 2>/dev/null | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" || echo "")
-            
-            # If not in state, check AWS directly by instance name
-            if [ -z "$CONTROL_PLANE_IP" ] || [ "$CONTROL_PLANE_IP" == "null" ]; then
-              echo "Control plane IP not in state yet, checking AWS for running instance..."
-              CONTROL_PLANE_IP=$(aws ec2 describe-instances \
-                --filters "Name=tag:Name,Values=itam-control-plane" "Name=instance-state-name,Values=running" \
-                --query 'Reservations[0].Instances[0].PublicIpAddress' \
-                --output text --region us-east-1 2>/dev/null | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" || echo "")
-            fi
-            
-            if [ -n "$CONTROL_PLANE_IP" ] && [ "$CONTROL_PLANE_IP" != "null" ] && [ "$CONTROL_PLANE_IP" != "None" ]; then
-              echo "Waiting for SSH access to control plane at $CONTROL_PLANE_IP..."
-              SSH_KEY_PATH="KP.pem"
-              if [ ! -f "$SSH_KEY_PATH" ]; then
-                echo "SSH key not found at $SSH_KEY_PATH, skipping SSH readiness check"
-                exit 0
-              fi
-              
-              for i in {1..30}; do
-                if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" ubuntu@$CONTROL_PLANE_IP "echo 'SSH ready'" 2>/dev/null; then
-                  echo "✓ Control plane is SSH-ready"
-                  break
-                fi
-                if [ $i -eq 30 ]; then
-                  echo "⚠ Control plane not SSH-ready after 5 minutes, but continuing..."
-                  echo "Terraform will retry with its own timeout settings"
-                else
-                  echo "Waiting for SSH... ($i/30 attempts)"
-                  sleep 10
-                fi
-              done
-            else
-              echo "Control plane IP not available yet, Terraform will wait for instance to be ready"
-            fi
-          fi
-
-      - name: Ensure ALB Listener and Target Group Attachments
-        working-directory: iac/terraform
-        continue-on-error: true
-        if: steps.terraform-plan.outputs.has_changes != 'true'
-        run: |
-          echo "Ensuring ALB listener is configured and worker nodes are registered..."
-          
-          # Get ALB ARN
-          ALB_ARN=$(aws elbv2 describe-load-balancers --names itam-alb --region us-east-1 --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
-          if [ -z "$ALB_ARN" ] || [ "$ALB_ARN" == "None" ]; then
-            echo "ALB not found. Skipping listener and target registration."
-            exit 0
-          fi
-          
-          # Get target group ARN
-          TG_ARN=$(aws elbv2 describe-target-groups --names itam-tg --region us-east-1 --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
-          if [ -z "$TG_ARN" ] || [ "$TG_ARN" == "None" ]; then
-            echo "Target group not found. Skipping target registration."
-            exit 0
-          fi
-          
-          # Check if listener exists and is configured correctly
-          LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" --region us-east-1 --query 'Listeners[0].ListenerArn' --output text 2>/dev/null || echo "")
-          if [ -z "$LISTENER_ARN" ] || [ "$LISTENER_ARN" == "None" ]; then
-            echo "ALB Listener not found. Creating listener..."
-            aws elbv2 create-listener \
-              --load-balancer-arn "$ALB_ARN" \
-              --protocol HTTP \
-              --port 80 \
-              --default-actions Type=forward,TargetGroupArn="$TG_ARN" \
-              --region us-east-1 && echo "✓ Listener created" || echo "✗ Failed to create listener"
-          else
-            # Verify listener is forwarding to the correct target group
-            LISTENER_TG=$(aws elbv2 describe-listeners --listener-arns "$LISTENER_ARN" --region us-east-1 --query 'Listeners[0].DefaultActions[0].TargetGroupArn' --output text 2>/dev/null || echo "")
-            if [ "$LISTENER_TG" != "$TG_ARN" ]; then
-              echo "Listener is not forwarding to the correct target group. Updating listener..."
-              aws elbv2 modify-listener \
-                --listener-arn "$LISTENER_ARN" \
-                --default-actions Type=forward,TargetGroupArn="$TG_ARN" \
-                --region us-east-1 && echo "✓ Listener updated" || echo "✗ Failed to update listener"
-            else
-              echo "✓ Listener is correctly configured"
-            fi
-          fi
-          
-          echo ""
-          echo "Ensuring worker nodes are registered in the target group..."
-          
-          # Get worker instance IDs from Terraform state
-          WORKER1_ID=$(terraform state show aws_instance.WORKER-1 2>/dev/null | grep "id " | head -1 | awk '{print $3}' | tr -d '"' || echo "")
-          WORKER2_ID=$(terraform state show aws_instance.WORKER-2 2>/dev/null | grep "id " | head -1 | awk '{print $3}' | tr -d '"' || echo "")
-          
-          # Check current targets in the target group
-          CURRENT_TARGETS=$(aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region us-east-1 --query 'TargetHealthDescriptions[*].Target.Id' --output text 2>/dev/null || echo "")
-          
-          # Register Worker 1 if not already registered
-          if [ -n "$WORKER1_ID" ] && [ "$WORKER1_ID" != "" ] && ! echo "$CURRENT_TARGETS" | grep -q "$WORKER1_ID"; then
-            echo "Registering Worker 1 ($WORKER1_ID) in target group..."
-            aws elbv2 register-targets \
-              --target-group-arn "$TG_ARN" \
-              --targets Id="$WORKER1_ID",Port=31415 \
-              --region us-east-1 && echo "✓ Worker 1 registered" || echo "✗ Failed to register Worker 1"
-          else
-            echo "Worker 1 already registered or not found"
-          fi
-          
-          # Register Worker 2 if not already registered
-          if [ -n "$WORKER2_ID" ] && [ "$WORKER2_ID" != "" ] && ! echo "$CURRENT_TARGETS" | grep -q "$WORKER2_ID"; then
-            echo "Registering Worker 2 ($WORKER2_ID) in target group..."
-            aws elbv2 register-targets \
-              --target-group-arn "$TG_ARN" \
-              --targets Id="$WORKER2_ID",Port=31415 \
-              --region us-east-1 && echo "✓ Worker 2 registered" || echo "✗ Failed to register Worker 2"
-          else
-            echo "Worker 2 already registered or not found"
-          fi
-          
-          # Note: Target group attachments cannot be imported into Terraform state
-          # They are managed via AWS CLI registration above, which is sufficient for functionality
-          # Terraform will create them on the next apply if infrastructure is recreated
+        run: terraform plan -out=tfplan
 
       - name: Terraform Apply
         working-directory: iac/terraform
-        timeout-minutes: 30
-        run: |
-          if [ "${{ steps.terraform-plan.outputs.has_changes }}" == "true" ]; then
-            echo "Applying Terraform changes..."
-            # Set timeout for apply operation (30 minutes total, but individual resource operations have their own timeouts)
-            # If apply fails due to existing resources, try to import and retry
-            if ! timeout 1800 terraform apply -auto-approve tfplan 2>&1 | tee /tmp/terraform-apply.log; then
-              APPLY_EXIT_CODE=${PIPESTATUS[0]}
-              if [ $APPLY_EXIT_CODE -eq 124 ]; then
-                echo "ERROR: Terraform apply timed out after 30 minutes"
-                echo "This usually means a resource is stuck (e.g., target group being destroyed)"
-                echo "Check AWS Console for stuck resources and manually resolve if needed"
-                exit 1
-              elif grep -q "already exists" /tmp/terraform-apply.log; then
-                echo "Resources already exist. Attempting to import and retry..."
-                terraform refresh
-                terraform apply -auto-approve tfplan
-              elif grep -q "security groups are invalid\|InvalidSecurityGroup" /tmp/terraform-apply.log; then
-                echo "ERROR: Security groups are invalid. Attempting to fix..."
-                # Get VPC ID
-                VPC_ID=$(terraform state show aws_vpc.ITAM-VPC 2>/dev/null | grep "^\s*id\s*=" | head -1 | awk -F'"' '{print $2}' || echo "")
-                if [ -z "$VPC_ID" ]; then
-                  VPC_ID=$(aws ec2 describe-vpcs --filters 'Name=tag:Name,Values=itam-vpc' --query 'Vpcs[0].VpcId' --output text --region us-east-1 2>/dev/null || echo "")
-                fi
-                
-                if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
-                  # Check if security groups exist in the correct VPC
-                  ALB_SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=itam-alb-sg" "Name=vpc-id,Values=$VPC_ID" --region us-east-1 --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
-                  
-                  if [ -n "$ALB_SG_ID" ] && [ "$ALB_SG_ID" != "None" ]; then
-                    echo "Found ALB security group: $ALB_SG_ID"
-                    # Import if not in state
-                    if ! terraform state show aws_security_group.ITAM-ALB-SG &>/dev/null 2>&1; then
-                      echo "Importing ALB security group into state..."
-                      terraform import aws_security_group.ITAM-ALB-SG "$ALB_SG_ID" || echo "Import failed"
-                    fi
-                    # Refresh and retry
-                    terraform refresh
-                    terraform apply -auto-approve tfplan
-                  else
-                    echo "ERROR: ALB security group 'itam-alb-sg' not found in VPC $VPC_ID"
-                    echo "Please create the security group manually or check Terraform configuration"
-                    exit 1
-                  fi
-                else
-                  echo "ERROR: Could not determine VPC ID"
-                  exit 1
-                fi
-              else
-                exit 1
-              fi
-            fi
-          elif [ "${{ steps.check-outputs.outputs.outputs_exist }}" != "true" ]; then
-            echo "No changes detected, but public IP outputs are missing or null."
-            echo "Running terraform apply to refresh state and populate outputs..."
-            terraform apply -auto-approve -refresh=true
-          else
-            echo "No changes detected. Skipping Terraform apply."
-            echo "Using existing infrastructure."
-            echo "Refreshing Terraform state to ensure outputs are current..."
-            terraform refresh || echo "Refresh completed (some resources may not support refresh)"
-          fi
+        run: terraform apply -auto-approve tfplan
 
       - name: Get Terraform Outputs
         id: terraform-output
         working-directory: iac/terraform
         run: |
-          # Check if outputs exist, if not wait a moment and retry
-          MAX_RETRIES=5
-          RETRY_COUNT=0
-          
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            # Get outputs using -raw, capture both stdout and stderr, filter out warnings
-            CONTROL_PLANE_IP=$(terraform output -raw CONTROL-PLANE-PUBLIC-IP 2>&1 | grep -v "Warning:" | grep -v "│" | grep -v "Error:" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || echo "")
-            WORKER1_IP=$(terraform output -raw WORKER-1-PUBLIC-IP 2>&1 | grep -v "Warning:" | grep -v "│" | grep -v "Error:" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || echo "")
-            WORKER2_IP=$(terraform output -raw WORKER-2-PUBLIC-IP 2>&1 | grep -v "Warning:" | grep -v "│" | grep -v "Error:" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || echo "")
-            
-            # If Terraform outputs are null or empty, try to get public IPs via AWS CLI
-            if [ -z "$CONTROL_PLANE_IP" ] || [ "$CONTROL_PLANE_IP" == "null" ]; then
-              echo "Public IP not found in Terraform output for control plane, trying AWS CLI..."
-              # Get instance ID from state - try multiple parsing methods
-              CONTROL_PLANE_INSTANCE_ID=$(terraform state show aws_instance.CONTROL-PLANE 2>/dev/null | grep -E "^\s*id\s*=" | head -1 | sed 's/.*= "\(.*\)".*/\1/' || echo "")
-              if [ -z "$CONTROL_PLANE_INSTANCE_ID" ]; then
-                # Alternative: use terraform state list and filter
-                CONTROL_PLANE_INSTANCE_ID=$(terraform state list | grep "aws_instance.CONTROL-PLANE" && terraform state show aws_instance.CONTROL-PLANE 2>/dev/null | grep -i "id" | grep -v "arn" | head -1 | awk -F'"' '{print $2}' || echo "")
-              fi
-              if [ -n "$CONTROL_PLANE_INSTANCE_ID" ] && [ "$CONTROL_PLANE_INSTANCE_ID" != "null" ] && [[ "$CONTROL_PLANE_INSTANCE_ID" =~ ^i- ]]; then
-                echo "Found instance ID: $CONTROL_PLANE_INSTANCE_ID"
-                CONTROL_PLANE_IP=$(aws ec2 describe-instances --instance-ids "$CONTROL_PLANE_INSTANCE_ID" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --region us-east-1 2>/dev/null | grep -v "None" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" || echo "")
-                if [ -n "$CONTROL_PLANE_IP" ]; then
-                  echo "Found control plane public IP via AWS CLI: $CONTROL_PLANE_IP"
-                else
-                  echo "Instance $CONTROL_PLANE_INSTANCE_ID does not have a public IP assigned"
-                fi
-              else
-                echo "Could not extract instance ID from Terraform state"
-              fi
-            fi
-            
-            if [ -z "$WORKER1_IP" ] || [ "$WORKER1_IP" == "null" ]; then
-              echo "Public IP not found in Terraform output for worker 1, trying AWS CLI..."
-              WORKER1_INSTANCE_ID=$(terraform state show aws_instance.WORKER-1 2>/dev/null | grep -E "^\s*id\s*=" | head -1 | sed 's/.*= "\(.*\)".*/\1/' || echo "")
-              if [ -z "$WORKER1_INSTANCE_ID" ]; then
-                WORKER1_INSTANCE_ID=$(terraform state list | grep "aws_instance.WORKER-1" && terraform state show aws_instance.WORKER-1 2>/dev/null | grep -i "id" | grep -v "arn" | head -1 | awk -F'"' '{print $2}' || echo "")
-              fi
-              if [ -n "$WORKER1_INSTANCE_ID" ] && [ "$WORKER1_INSTANCE_ID" != "null" ] && [[ "$WORKER1_INSTANCE_ID" =~ ^i- ]]; then
-                WORKER1_IP=$(aws ec2 describe-instances --instance-ids "$WORKER1_INSTANCE_ID" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --region us-east-1 2>/dev/null | grep -v "None" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" || echo "")
-                if [ -n "$WORKER1_IP" ]; then
-                  echo "Found worker 1 public IP via AWS CLI: $WORKER1_IP"
-                fi
-              fi
-            fi
-            
-            if [ -z "$WORKER2_IP" ] || [ "$WORKER2_IP" == "null" ]; then
-              echo "Public IP not found in Terraform output for worker 2, trying AWS CLI..."
-              WORKER2_INSTANCE_ID=$(terraform state show aws_instance.WORKER-2 2>/dev/null | grep -E "^\s*id\s*=" | head -1 | sed 's/.*= "\(.*\)".*/\1/' || echo "")
-              if [ -z "$WORKER2_INSTANCE_ID" ]; then
-                WORKER2_INSTANCE_ID=$(terraform state list | grep "aws_instance.WORKER-2" && terraform state show aws_instance.WORKER-2 2>/dev/null | grep -i "id" | grep -v "arn" | head -1 | awk -F'"' '{print $2}' || echo "")
-              fi
-              if [ -n "$WORKER2_INSTANCE_ID" ] && [ "$WORKER2_INSTANCE_ID" != "null" ] && [[ "$WORKER2_INSTANCE_ID" =~ ^i- ]]; then
-                WORKER2_IP=$(aws ec2 describe-instances --instance-ids "$WORKER2_INSTANCE_ID" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --region us-east-1 2>/dev/null | grep -v "None" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" || echo "")
-                if [ -n "$WORKER2_IP" ]; then
-                  echo "Found worker 2 public IP via AWS CLI: $WORKER2_IP"
-                fi
-              fi
-            fi
-            
-            # Check if we got valid IPs (not empty and matches IP pattern)
-            if [ -n "$CONTROL_PLANE_IP" ] && [ -n "$WORKER1_IP" ] && [ -n "$WORKER2_IP" ] && \
-               echo "$CONTROL_PLANE_IP" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" && \
-               echo "$WORKER1_IP" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" && \
-               echo "$WORKER2_IP" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"; then
-              echo "✓ Successfully retrieved Terraform outputs"
-              echo "Control Plane IP: $CONTROL_PLANE_IP"
-              echo "Worker 1 IP: $WORKER1_IP"
-              echo "Worker 2 IP: $WORKER2_IP"
-              echo "control_plane_ip=$CONTROL_PLANE_IP" >> $GITHUB_OUTPUT
-              echo "worker1_ip=$WORKER1_IP" >> $GITHUB_OUTPUT
-              echo "worker2_ip=$WORKER2_IP" >> $GITHUB_OUTPUT
-              break
-            else
-              RETRY_COUNT=$((RETRY_COUNT + 1))
-              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                echo "Outputs not ready yet. Retrying in 5 seconds... ($RETRY_COUNT/$MAX_RETRIES)"
-                echo "Debug - Control Plane: '$CONTROL_PLANE_IP'"
-                echo "Debug - Worker 1: '$WORKER1_IP'"
-                echo "Debug - Worker 2: '$WORKER2_IP'"
-                sleep 5
-              else
-                echo "ERROR: Failed to retrieve Terraform outputs after $MAX_RETRIES attempts"
-                echo ""
-                echo "=== Diagnostic Information ==="
-                echo "Checking Terraform state..."
-                terraform state list 2>&1 | head -20 || echo "No state found"
-                echo ""
-                echo "Checking if resources exist in state..."
-                terraform state show aws_instance.CONTROL-PLANE 2>&1 | head -5 || echo "Control plane not in state"
-                echo ""
-                echo "Checking all Terraform outputs..."
-                terraform output 2>&1 || echo "No outputs available"
-                echo ""
-                echo "If outputs are missing, this usually means:"
-                echo "1. Infrastructure was created but outputs weren't saved to state"
-                echo "2. State file is missing or corrupted"
-                echo "3. Outputs need to be populated by running 'terraform apply'"
-                exit 1
-              fi
-            fi
-          done
+          CONTROL_PLANE_IP=$(terraform output -raw CONTROL-PLANE-PUBLIC-IP)
+          WORKER1_IP=$(terraform output -raw WORKER-1-PUBLIC-IP)
+          WORKER2_IP=$(terraform output -raw WORKER-2-PUBLIC-IP)
+          echo "control_plane_ip=$CONTROL_PLANE_IP" >> $GITHUB_OUTPUT
+          echo "worker1_ip=$WORKER1_IP" >> $GITHUB_OUTPUT
+          echo "worker2_ip=$WORKER2_IP" >> $GITHUB_OUTPUT
 
-      - name: Prepare SSH key for artifact upload
-        continue-on-error: true
-        working-directory: iac/terraform
-        run: |
-          # Check if KP.pem exists (created by Terraform during apply)
-          if [ -f "KP.pem" ]; then
-            echo "✓ SSH key found: KP.pem (created by Terraform)"
-          else
-            echo "KP.pem not found. This is normal when using existing infrastructure."
-            echo "Attempting to retrieve from Terraform state..."
-            
-            # Try to get private key from Terraform state
-            if terraform state show tls_private_key.ITAM-KP &>/dev/null 2>&1; then
-              echo "Found tls_private_key in state. Extracting private key..."
-              # Try JSON output first
-              PRIVATE_KEY=$(terraform state show -json tls_private_key.ITAM-KP 2>/dev/null | grep -o '"private_key_pem": "[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
-              
-              if [ -n "$PRIVATE_KEY" ] && [ "$PRIVATE_KEY" != "null" ]; then
-                echo "$PRIVATE_KEY" > KP.pem
-                chmod 600 KP.pem
-                echo "✓ SSH key retrieved from Terraform state (JSON)"
-              else
-                # Try text output
-                PRIVATE_KEY=$(terraform state show tls_private_key.ITAM-KP 2>/dev/null | grep "private_key_pem" | head -1 | sed 's/.*= "\(.*\)".*/\1/' || echo "")
-                if [ -n "$PRIVATE_KEY" ] && [ "$PRIVATE_KEY" != "null" ]; then
-                  echo "$PRIVATE_KEY" > KP.pem
-                  chmod 600 KP.pem
-                  echo "✓ SSH key retrieved from Terraform state (text)"
-                else
-                  echo "Could not extract private key from state"
-                fi
-              fi
-            else
-              echo "⚠ Could not find SSH key in Terraform state."
-              echo "This may happen when:"
-              echo "  1. Infrastructure was created outside Terraform"
-              echo "  2. Terraform state doesn't include the key"
-              echo "  3. This is the first run and key hasn't been created yet"
-              echo ""
-              echo "The SSH key will be available from:"
-              echo "  - Previous workflow artifact (if available)"
-              echo "  - Or will be created when Terraform apply runs"
-            fi
-          fi
-          
-          # Verify the key file exists and is valid
-          if [ -f "KP.pem" ]; then
-            KEY_SIZE=$(wc -c < KP.pem)
-            if [ "$KEY_SIZE" -gt 100 ]; then
-              echo "✓ SSH key file is valid (size: $KEY_SIZE bytes)"
-            else
-              echo "⚠ WARNING: SSH key file seems too small. It may be invalid."
-              rm -f KP.pem
-            fi
-          fi
-
-      - name: Store SSH key on control plane (for future retrieval)
-        continue-on-error: true
-        if: steps.terraform-plan.outputs.has_changes != 'true'
-        run: |
-          CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
-          if [ -n "$CONTROL_PLANE_IP" ] && [ -f "iac/terraform/KP.pem" ]; then
-            echo "Storing SSH key on control plane for future retrieval via EC2 Instance Connect..."
-            # Wait for SSH to be ready
-            for i in {1..30}; do
-              if ssh -i iac/terraform/KP.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$CONTROL_PLANE_IP "echo 'SSH ready'" 2>/dev/null; then
-                echo "SSH is ready. Copying key to control plane..."
-                scp -i iac/terraform/KP.pem -o StrictHostKeyChecking=no iac/terraform/KP.pem ubuntu@$CONTROL_PLANE_IP:/home/ubuntu/.ssh/kp_backup.pem 2>/dev/null && \
-                ssh -i iac/terraform/KP.pem -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "chmod 600 /home/ubuntu/.ssh/kp_backup.pem" 2>/dev/null && \
-                echo "✓ SSH key stored on control plane" && break || echo "Attempt $i/30 failed, retrying..."
-              fi
-              sleep 5
-            done
-          fi
+      - name: Upload SSH key as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-key
+          path: iac/terraform/KP.pem
+          retention-days: 1
 
       - name: Wait for EC2 instances to be ready
-        timeout-minutes: 10
-        if: steps.terraform-plan.outputs.has_changes == 'true'
         run: |
           CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
           WORKER1_IP="${{ steps.terraform-output.outputs.worker1_ip }}"
           WORKER2_IP="${{ steps.terraform-output.outputs.worker2_ip }}"
-          SSH_KEY_PATH="iac/terraform/KP.pem"
-          
-          echo "New infrastructure was created. Waiting for instances to be SSH-ready..."
-          echo "Control Plane: $CONTROL_PLANE_IP"
-          echo "Worker 1: $WORKER1_IP"
-          echo "Worker 2: $WORKER2_IP"
-          
-          # Function to wait for SSH with diagnostics
-          wait_for_ssh() {
-            local IP=$1
-            local NAME=$2
-            local MAX_ATTEMPTS=60  # 10 minutes total (60 * 10 seconds)
-            local ATTEMPT=0
-            
-            echo ""
-            echo "=== Waiting for $NAME ($IP) ==="
-            
-            # First, check if instance is running
-            echo "Checking instance status..."
-            # Try to find instance by public IP
-            INSTANCE_ID=$(aws ec2 describe-instances \
-              --filters "Name=ip-address,Values=$IP" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-              --query 'Reservations[0].Instances[0].InstanceId' \
-              --output text --region us-east-1 2>/dev/null || echo "")
-            
-            # If not found by IP, try by name tag
-            if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ]; then
-              if [[ "$NAME" == *"Control Plane"* ]]; then
-                INSTANCE_ID=$(aws ec2 describe-instances \
-                  --filters "Name=tag:Name,Values=itam-control-plane" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-                  --query 'Reservations[0].Instances[0].InstanceId' \
-                  --output text --region us-east-1 2>/dev/null || echo "")
-              elif [[ "$NAME" == *"Worker 1"* ]]; then
-                INSTANCE_ID=$(aws ec2 describe-instances \
-                  --filters "Name=tag:Name,Values=itam-worker-1" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-                  --query 'Reservations[0].Instances[0].InstanceId' \
-                  --output text --region us-east-1 2>/dev/null || echo "")
-              elif [[ "$NAME" == *"Worker 2"* ]]; then
-                INSTANCE_ID=$(aws ec2 describe-instances \
-                  --filters "Name=tag:Name,Values=itam-worker-2" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-                  --query 'Reservations[0].Instances[0].InstanceId' \
-                  --output text --region us-east-1 2>/dev/null || echo "")
+          echo "Waiting for instances to be ready..."
+          for IP in "$CONTROL_PLANE_IP" "$WORKER1_IP" "$WORKER2_IP"; do
+            echo "Waiting for $IP..."
+            for i in {1..30}; do
+              if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i iac/terraform/KP.pem ubuntu@$IP "echo 'ready'" 2>/dev/null; then
+                echo "$IP is ready"
+                break
               fi
-            fi
-            
-            if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ]; then
-              echo "⚠ WARNING: Could not find instance with IP $IP"
-              echo "Possible reasons:"
-              echo "  1. Instance is still being created (check AWS Console)"
-              echo "  2. IP address is incorrect or instance doesn't have public IP"
-              echo "  3. Instance was terminated or in error state"
-              echo "Continuing to wait, but SSH will likely fail..."
-            else
-              echo "Found instance: $INSTANCE_ID"
-              INSTANCE_INFO=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region us-east-1 --query 'Reservations[0].Instances[0]' 2>/dev/null || echo "{}")
-              INSTANCE_STATE=$(echo "$INSTANCE_INFO" | grep -o '"Name": "[^"]*"' | head -1 | cut -d'"' -f4 || echo "unknown")
-              INSTANCE_PUBLIC_IP=$(echo "$INSTANCE_INFO" | grep -o '"PublicIpAddress": "[^"]*"' | head -1 | cut -d'"' -f4 || echo "none")
-              INSTANCE_STATUS=$(aws ec2 describe-instance-status --instance-ids "$INSTANCE_ID" --region us-east-1 --query 'InstanceStatuses[0].InstanceStatus.Status' --output text 2>/dev/null || echo "unknown")
-              SYSTEM_STATUS=$(aws ec2 describe-instance-status --instance-ids "$INSTANCE_ID" --region us-east-1 --query 'InstanceStatuses[0].SystemStatus.Status' --output text 2>/dev/null || echo "unknown")
-              
-              echo "  Instance state: $INSTANCE_STATE"
-              echo "  Public IP: $INSTANCE_PUBLIC_IP"
-              echo "  Instance status: $INSTANCE_STATUS"
-              echo "  System status: $SYSTEM_STATUS"
-              
-              if [ "$INSTANCE_STATE" != "running" ]; then
-                echo "  ⚠ Instance is not in 'running' state. SSH will not work until it's running."
-              fi
-              
-              if [ "$INSTANCE_PUBLIC_IP" != "$IP" ] && [ "$INSTANCE_PUBLIC_IP" != "none" ] && [ "$INSTANCE_PUBLIC_IP" != "null" ]; then
-                echo "  ⚠ WARNING: Instance public IP ($INSTANCE_PUBLIC_IP) doesn't match expected IP ($IP)"
-                echo "  This may cause SSH connection failures."
-              fi
-              
-              # Check security group
-              SG_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text --region us-east-1 2>/dev/null || echo "")
-              if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
-                echo "  Security group: $SG_ID"
-                SSH_RULES=$(aws ec2 describe-security-groups --group-ids "$SG_ID" --query 'SecurityGroups[0].IpPermissions[?FromPort==`22`]' --output json --region us-east-1 2>/dev/null || echo "[]")
-                if [ "$SSH_RULES" == "[]" ] || [ -z "$SSH_RULES" ]; then
-                  echo "  ⚠ WARNING: Security group does NOT allow SSH on port 22!"
-                  echo "  This will prevent SSH connections. Check security group rules."
-                else
-                  echo "  ✓ Security group allows SSH on port 22"
-                fi
-              fi
-            fi
-            
-            while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-              ATTEMPT=$((ATTEMPT + 1))
-              
-              # Try SSH connection
-              if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$SSH_KEY_PATH" ubuntu@$IP "echo 'SSH ready'" 2>/dev/null; then
-                echo "✓ $NAME ($IP) is SSH-ready after $ATTEMPT attempts"
-                return 0
-              fi
-              
-              # Every 6 attempts (1 minute), show diagnostics
-              if [ $((ATTEMPT % 6)) -eq 0 ]; then
-                echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: SSH not ready yet..."
-                if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
-                  INSTANCE_STATE=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].State.Name' --output text --region us-east-1 2>/dev/null || echo "unknown")
-                  echo "  Instance state: $INSTANCE_STATE"
-                  
-                  # Check security group allows SSH
-                  SG_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text --region us-east-1 2>/dev/null || echo "")
-                  if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
-                    SSH_RULE=$(aws ec2 describe-security-groups --group-ids "$SG_ID" --query 'SecurityGroups[0].IpPermissions[?FromPort==`22`]' --output text --region us-east-1 2>/dev/null || echo "")
-                    if [ -z "$SSH_RULE" ]; then
-                      echo "  WARNING: Security group may not allow SSH on port 22"
-                    fi
-                  fi
-                fi
-              else
-                echo "Attempt $ATTEMPT/$MAX_ATTEMPTS..."
-              fi
-              
+              echo "Attempt $i/30..."
               sleep 10
             done
-            
-            echo "⚠ WARNING: $NAME ($IP) did not become SSH-ready after $MAX_ATTEMPTS attempts (10 minutes)"
-            echo "This may be due to:"
-            echo "  - Instance still booting (check AWS Console)"
-            echo "  - Security group blocking SSH"
-            echo "  - SSH key mismatch"
-            echo "  - Instance in error state"
-            return 1
-          }
-          
-          # Wait for each instance (continue even if one fails)
-          FAILED_INSTANCES=0
-          
-          if [ -n "$CONTROL_PLANE_IP" ] && [ "$CONTROL_PLANE_IP" != "null" ] && [ "$CONTROL_PLANE_IP" != "None" ]; then
-            wait_for_ssh "$CONTROL_PLANE_IP" "Control Plane" || FAILED_INSTANCES=$((FAILED_INSTANCES + 1))
-          fi
-          
-          if [ -n "$WORKER1_IP" ] && [ "$WORKER1_IP" != "null" ] && [ "$WORKER1_IP" != "None" ]; then
-            wait_for_ssh "$WORKER1_IP" "Worker 1" || FAILED_INSTANCES=$((FAILED_INSTANCES + 1))
-          fi
-          
-          if [ -n "$WORKER2_IP" ] && [ "$WORKER2_IP" != "null" ] && [ "$WORKER2_IP" != "None" ]; then
-            wait_for_ssh "$WORKER2_IP" "Worker 2" || FAILED_INSTANCES=$((FAILED_INSTANCES + 1))
-          fi
-          
-          if [ $FAILED_INSTANCES -gt 0 ]; then
-            echo ""
-            echo "⚠ WARNING: $FAILED_INSTANCES instance(s) did not become SSH-ready"
-            echo "The workflow will continue, but some steps may fail."
-            echo "Check AWS Console for instance status and security group configuration."
-          else
-            echo ""
-            echo "✓ All instances are SSH-ready"
-          fi
+          done
           
           # Wait a bit more for user-data scripts to start
-          echo ""
           echo "Waiting for user-data scripts to initialize..."
           sleep 30
 
       - name: Check user-data script progress on control plane
-        if: steps.terraform-plan.outputs.has_changes == 'true'
         run: |
           CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
-          echo "New infrastructure detected. Checking user-data script status..."
+          echo "Checking user-data script status..."
           # Check if cloud-init is still running
           CLOUD_INIT_STATUS=$(ssh -i iac/terraform/KP.pem -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "sudo cloud-init status 2>/dev/null || echo 'unknown'" 2>/dev/null || echo "unknown")
           echo "Cloud-init status: $CLOUD_INIT_STATUS"
@@ -880,61 +176,22 @@ jobs:
           echo "Recent cloud-init logs:"
           ssh -i iac/terraform/KP.pem -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "sudo tail -20 /var/log/cloud-init-output.log" 2>/dev/null || echo "Could not retrieve logs"
 
-      - name: Verify existing infrastructure is ready (skip if new infrastructure)
-        if: steps.terraform-plan.outputs.has_changes != 'true'
-        run: |
-          CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
-          echo "Using existing infrastructure. Verifying it's still running..."
-          SSH_KEY_PATH="iac/terraform/KP.pem"
-          
-          # Quick SSH check (should be instant if infrastructure is running)
-          if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" ubuntu@$CONTROL_PLANE_IP "echo 'ready'" 2>/dev/null; then
-            echo "✓ Existing infrastructure is accessible"
-          else
-            echo "⚠ WARNING: Existing infrastructure is not accessible via SSH"
-            echo "This may indicate instances were stopped or terminated."
-            echo "The workflow will continue, but deployment may fail."
-          fi
-          
-          # Quick Kubernetes check
-          if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/home/ubuntu/.kube/config cluster-info &>/dev/null" 2>/dev/null; then
-            echo "✓ Kubernetes cluster is accessible"
-          else
-            echo "⚠ WARNING: Kubernetes cluster is not accessible"
-            echo "This may indicate the cluster needs to be restarted."
-          fi
-
       - name: Set up SSH keys
         run: |
           mkdir -p ~/.ssh
+          cp iac/terraform/KP.pem ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
           CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
           WORKER1_IP="${{ steps.terraform-output.outputs.worker1_ip }}"
           WORKER2_IP="${{ steps.terraform-output.outputs.worker2_ip }}"
-          
-          # Check if KP.pem exists (created by Terraform or prepared step)
-          if [ -f "iac/terraform/KP.pem" ]; then
-            echo "Using SSH key from Terraform output..."
-            cp iac/terraform/KP.pem ~/.ssh/id_rsa
-            chmod 600 ~/.ssh/id_rsa
-          else
-            echo "SSH key not found. This may happen when using existing infrastructure."
-            echo "The SSH key will be retrieved from artifact in the deploy phase."
-            echo "Skipping SSH setup in infrastructure phase (not needed for existing infrastructure)."
-            # Don't create a placeholder - it will be handled in deploy phase
-          fi
-          
-          # Only add to known_hosts if we have the key
-          if [ -f "~/.ssh/id_rsa" ] || [ -f "iac/terraform/KP.pem" ]; then
-            ssh-keyscan -H $CONTROL_PLANE_IP >> ~/.ssh/known_hosts 2>/dev/null || true
-            ssh-keyscan -H $WORKER1_IP >> ~/.ssh/known_hosts 2>/dev/null || true
-            ssh-keyscan -H $WORKER2_IP >> ~/.ssh/known_hosts 2>/dev/null || true
-          fi
+          ssh-keyscan -H $CONTROL_PLANE_IP >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -H $WORKER1_IP >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -H $WORKER2_IP >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Wait for Kubernetes control plane to be ready
-        if: steps.terraform-plan.outputs.has_changes == 'true'
         run: |
           CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
-          echo "New infrastructure detected. Waiting for Kubernetes API server to be ready..."
+          echo "Waiting for Kubernetes API server to be ready..."
           echo "This may take 3-5 minutes after instance startup..."
           
           # First, wait for kubeadm init to complete
@@ -998,7 +255,6 @@ jobs:
 
       - name: Get join command from control plane
         id: join-command
-        if: steps.terraform-plan.outputs.has_changes == 'true'
         run: |
           CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
           JOIN_CMD=$(ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "cat /home/ubuntu/join-command.sh")
@@ -1007,11 +263,9 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Rename and join worker 1
-        if: steps.terraform-plan.outputs.has_changes == 'true'
         run: |
           WORKER1_IP="${{ steps.terraform-output.outputs.worker1_ip }}"
           JOIN_CMD="${{ steps.join-command.outputs.join_command }}"
-          echo "New infrastructure detected. Joining worker 1 to cluster..."
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$WORKER1_IP <<ENDSSH
             set -e
             INSTANCE_ID=\$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
@@ -1021,11 +275,9 @@ jobs:
           ENDSSH
 
       - name: Rename and join worker 2
-        if: steps.terraform-plan.outputs.has_changes == 'true'
         run: |
           WORKER2_IP="${{ steps.terraform-output.outputs.worker2_ip }}"
           JOIN_CMD="${{ steps.join-command.outputs.join_command }}"
-          echo "New infrastructure detected. Joining worker 2 to cluster..."
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$WORKER2_IP <<ENDSSH
             set -e
             INSTANCE_ID=\$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
@@ -1035,10 +287,9 @@ jobs:
           ENDSSH
 
       - name: Wait for all nodes to be ready
-        if: steps.terraform-plan.outputs.has_changes == 'true'
         run: |
           CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
-          echo "New infrastructure detected. Waiting for all nodes to join the cluster..."
+          echo "Waiting for all nodes to join the cluster..."
           for i in {1..30}; do
             NODE_COUNT=$(ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/home/ubuntu/.kube/config get nodes --no-headers 2>/dev/null | wc -l" || echo "0")
             READY_COUNT=$(ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/home/ubuntu/.kube/config get nodes --no-headers 2>/dev/null | grep -c Ready || echo '0'")
@@ -1073,155 +324,26 @@ jobs:
         with:
           version: 'latest'
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - name: Download SSH key artifact
+        uses: actions/download-artifact@v4
         with:
-          terraform_version: "1.6.0"
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
-
-      - name: Retrieve SSH key via AWS EC2 Instance Connect
-        run: |
-          mkdir -p ~/.ssh
-          CONTROL_PLANE_IP="${{ needs.infrastructure.outputs.control_plane_ip }}"
-          
-          if [ -z "$CONTROL_PLANE_IP" ] || [ "$CONTROL_PLANE_IP" == "" ]; then
-            echo "ERROR: Control plane IP not available"
-            exit 1
-          fi
-          
-          echo "Control plane IP: $CONTROL_PLANE_IP"
-          
-          # Get instance ID from IP
-          INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=ip-address,Values=$CONTROL_PLANE_IP" \
-                      "Name=instance-state-name,Values=running" \
-            --query 'Reservations[0].Instances[0].InstanceId' \
-            --output text \
-            --region "${{ secrets.AWS_REGION || 'us-east-1' }}" 2>/dev/null || echo "")
-          
-          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ] || [ "$INSTANCE_ID" == "" ]; then
-            echo "ERROR: Could not find instance ID for control plane IP: $CONTROL_PLANE_IP"
-            exit 1
-          fi
-          
-          echo "Found instance ID: $INSTANCE_ID"
-          
-          # Generate a temporary key for EC2 Instance Connect
-          ssh-keygen -t rsa -b 4096 -f "$HOME/.ssh/ec2_connect_key" -N "" -q 2>/dev/null
-          
-          if [ ! -f "$HOME/.ssh/ec2_connect_key.pub" ]; then
-            echo "ERROR: Failed to generate temporary SSH key"
-            exit 1
-          fi
-          
-          # Get availability zone
-          AVAILABILITY_ZONE=$(aws ec2 describe-instances \
-            --instance-ids "$INSTANCE_ID" \
-            --query 'Reservations[0].Instances[0].Placement.AvailabilityZone' \
-            --output text \
-            --region "${{ secrets.AWS_REGION || 'us-east-1' }}" 2>/dev/null || echo "")
-          
-          if [ -z "$AVAILABILITY_ZONE" ] || [ "$AVAILABILITY_ZONE" == "None" ]; then
-            echo "ERROR: Could not determine availability zone"
-            exit 1
-          fi
-          
-          echo "Sending SSH key via EC2 Instance Connect..."
-          EC2_CONNECT_RESULT=$(aws ec2-instance-connect send-ssh-public-key \
-            --instance-id "$INSTANCE_ID" \
-            --availability-zone "$AVAILABILITY_ZONE" \
-            --instance-os-user "ubuntu" \
-            --ssh-public-key file://"$HOME/.ssh/ec2_connect_key.pub" \
-            --region "${{ secrets.AWS_REGION || 'us-east-1' }}" \
-            2>&1 || echo "")
-          
-          if ! echo "$EC2_CONNECT_RESULT" | grep -q "Success" && ! echo "$EC2_CONNECT_RESULT" | grep -q "200"; then
-            echo "ERROR: Failed to send SSH key via EC2 Instance Connect"
-            echo "$EC2_CONNECT_RESULT"
-            exit 1
-          fi
-          
-          echo "✓ EC2 Instance Connect key sent successfully"
-          echo "Note: This key is temporary (valid for 60 seconds)"
-          echo "Attempting to retrieve original key from control plane..."
-          
-          # Try to SSH and get the original key (we have 60 seconds)
-          sleep 2
-          if ssh -i "$HOME/.ssh/ec2_connect_key" \
-             -o StrictHostKeyChecking=no \
-             -o ConnectTimeout=10 \
-             ubuntu@$CONTROL_PLANE_IP \
-             "if [ -f /home/ubuntu/.ssh/kp_backup.pem ]; then cat /home/ubuntu/.ssh/kp_backup.pem; else echo 'NOT_FOUND'; fi" \
-             > "$HOME/.ssh/id_rsa" 2>/dev/null; then
-            KEY_SIZE=$(wc -c < "$HOME/.ssh/id_rsa" 2>/dev/null || echo "0")
-            if [ "$KEY_SIZE" -gt 100 ]; then
-              chmod 600 "$HOME/.ssh/id_rsa"
-              echo "✓ Original SSH key retrieved via EC2 Instance Connect (size: $KEY_SIZE bytes)"
-              rm -f "$HOME/.ssh/ec2_connect_key" "$HOME/.ssh/ec2_connect_key.pub"
-              exit 0
-            fi
-          fi
-          
-          # If we can't get the original, use the temporary key
-          mv "$HOME/.ssh/ec2_connect_key" "$HOME/.ssh/id_rsa"
-          chmod 600 "$HOME/.ssh/id_rsa"
-          echo "✓ Using temporary key from EC2 Instance Connect"
-          echo "⚠ Note: This is a temporary key. Original key should be retrieved on next run."
-
-      - name: Verify SSH key is available
-        run: |
-          if [ -f "$HOME/.ssh/id_rsa" ]; then
-            KEY_SIZE=$(wc -c < "$HOME/.ssh/id_rsa")
-            if [ "$KEY_SIZE" -gt 100 ]; then
-              echo "✓ SSH key is available and valid (size: $KEY_SIZE bytes)"
-              chmod 600 "$HOME/.ssh/id_rsa"
-            else
-              echo "ERROR: SSH key file is too small or invalid"
-              exit 1
-            fi
-          else
-            echo "ERROR: SSH key is required for deployment but not available"
-            echo "Please ensure:"
-            echo "  1. Infrastructure was created by this workflow, OR"
-            echo "  2. SSH key artifact is available, OR"
-            echo "  3. Terraform state includes the SSH key"
-            exit 1
-          fi
+          name: ssh-key
+          path: ~/.ssh/
 
       - name: Set up SSH and get kubeconfig
         run: |
+          chmod 600 ~/.ssh/KP.pem
           CONTROL_PLANE_IP="${{ needs.infrastructure.outputs.control_plane_ip }}"
-          SSH_KEY_PATH="$HOME/.ssh/id_rsa"
-          
-          if [ ! -f "$SSH_KEY_PATH" ]; then
-            echo "ERROR: SSH key not found at $SSH_KEY_PATH"
-            echo "This is required for deployment."
-            exit 1
-          fi
-          
-          chmod 600 "$SSH_KEY_PATH"
           mkdir -p ~/.kube
           mkdir -p ~/.ssh
           ssh-keyscan -H $CONTROL_PLANE_IP >> ~/.ssh/known_hosts 2>/dev/null || true
-          
           # Get kubeconfig from control plane
-          echo "Retrieving kubeconfig from control plane..."
-          ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "cat /home/ubuntu/.kube/config" > ~/.kube/config
+          ssh -i ~/.ssh/KP.pem -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "cat /home/ubuntu/.kube/config" > ~/.kube/config
           chmod 600 ~/.kube/config
-          
           # Update to use public IP
           sed -i "s|10.0.1.10:6443|$CONTROL_PLANE_IP:6443|g" ~/.kube/config
           kubectl config set-cluster kubernetes --insecure-skip-tls-verify=true
-          
           # Verify
-          echo "Verifying Kubernetes connection..."
           kubectl cluster-info
           kubectl get nodes
 
@@ -1258,40 +380,6 @@ jobs:
           volumeBindingMode: Immediate
           EOF
 
-      - name: Verify cluster nodes and configure scheduling
-        run: |
-          CONTROL_PLANE_IP="${{ needs.infrastructure.outputs.control_plane_ip }}"
-          echo "Verifying cluster nodes and ensuring proper scheduling..."
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP <<ENDSSH
-            echo "=== Current cluster nodes ==="
-            kubectl get nodes -o wide
-            echo ""
-            
-            # Ensure control plane has taint
-            echo "Ensuring control plane taint..."
-            kubectl taint nodes k8s-controller node-role.kubernetes.io/control-plane:NoSchedule --overwrite 2>/dev/null || \
-            kubectl taint nodes k8s-controller node-role.kubernetes.io/master:NoSchedule --overwrite 2>/dev/null || \
-            echo "Taint already exists"
-            
-            # Get all nodes except control plane
-            WORKER_NODES=\$(kubectl get nodes -o jsonpath='{.items[?(@.metadata.name!="k8s-controller")].metadata.name}')
-            if [ -z "\$WORKER_NODES" ]; then
-              echo "⚠ WARNING: No worker nodes found in cluster!"
-              echo "This means pods can only schedule on control plane (which has taint)"
-              echo "Pods will be Pending until worker nodes join the cluster"
-            else
-              echo "Found worker nodes: \$WORKER_NODES"
-              for node in \$WORKER_NODES; do
-                echo "Checking node: \$node"
-                kubectl get node \$node
-              done
-            fi
-            
-            echo ""
-            echo "=== Node taints ==="
-            kubectl describe nodes | grep -A 2 "Taints:" || echo "No taints found"
-          ENDSSH
-
       - name: Deploy application using deploy.sh
         run: |
           set -e
@@ -1299,132 +387,16 @@ jobs:
           IMAGE_REPO="${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}"
           IMAGE_TAG="${{ env.DOCKER_TAG }}"
           echo "Deploying with image: $IMAGE_REPO:$IMAGE_TAG"
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP <<ENDSSH
+          ssh -i ~/.ssh/KP.pem -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP <<ENDSSH
             cd /home/ubuntu/helm
             ./deploy.sh "$IMAGE_REPO" "$IMAGE_TAG"
           ENDSSH
 
-          echo "Waiting a moment for deployment to settle..."
-          sleep 15
-          
-          echo "=== Verifying deployment ==="
-          kubectl get pods -l app=itam-app -o wide || echo "No pods found"
-          kubectl get deployment itam-app || echo "Deployment not found"
-          
-          # Check node status
-          echo ""
-          echo "=== Cluster node status ==="
-          kubectl get nodes -o wide
-          
-          # Check if pods are on control plane
-          echo ""
-          echo "Checking pod distribution..."
-          PODS_ON_CP=$(kubectl get pods -l app=itam-app -o wide --no-headers 2>/dev/null | grep "k8s-controller" | awk '{print $1}' || echo "")
-          WORKER_NODES=$(kubectl get nodes -o jsonpath='{.items[?(@.metadata.name!="k8s-controller")].metadata.name}' 2>/dev/null || echo "")
-          
-          if [ -z "$WORKER_NODES" ]; then
-            echo "⚠ WARNING: No worker nodes in cluster!"
-            echo "Pods will schedule on control plane if no workers are available"
-            echo "This is expected if workers haven't joined yet"
-          elif [ -n "$PODS_ON_CP" ]; then
-            echo "⚠ Found pods on control plane. Deleting to force rescheduling on workers..."
-            echo "$PODS_ON_CP" | while read -r pod; do
-              if [ -n "$pod" ]; then
-                kubectl delete pod "$pod" --grace-period=0 --force 2>/dev/null || true
-              fi
-            done
-            echo "Waiting for pods to reschedule on worker nodes..."
-            sleep 20
-          else
-            echo "✓ No pods on control plane"
-          fi
-          
-          # Show pending pods details
-          PENDING_PODS=$(kubectl get pods -l app=itam-app -o jsonpath='{.items[?(@.status.phase=="Pending")].metadata.name}' 2>/dev/null || echo "")
-          if [ -n "$PENDING_PODS" ]; then
-            echo ""
-            echo "=== Pending pods (checking why they can't schedule) ==="
-            for pod in $PENDING_PODS; do
-              echo "Pod: $pod"
-              kubectl describe pod $pod | grep -A 15 "Events:" || true
-              echo ""
-            done
-          fi
-          
-          echo ""
-          echo "=== Final pod distribution ==="
-          kubectl get pods -l app=itam-app -o wide
-
-      - name: Verify deployment and health endpoint
+      - name: Verify deployment
         run: |
           echo "=== Deployment Status ==="
           kubectl get pods -l app=itam-app
           kubectl get svc itam-app
-          echo ""
-          
-          # Get a Running pod (not Terminating)
-          POD_NAME=$(kubectl get pods -l app=itam-app -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' 2>/dev/null | awk '{print $1}' || echo "")
-          
-          if [ -n "$POD_NAME" ]; then
-            echo "Testing health endpoint on Running pod: $POD_NAME"
-            for i in {1..10}; do
-              if kubectl exec "$POD_NAME" -- curl -s http://localhost:31415/health > /dev/null 2>&1; then
-                echo "✓ Health endpoint is responding in pod"
-                kubectl exec "$POD_NAME" -- curl -s http://localhost:31415/health
-                break
-              else
-                if [ $i -eq 10 ]; then
-                  echo "⚠ Health endpoint not responding in pod after 10 attempts"
-                  echo "Checking pod logs..."
-                  kubectl logs "$POD_NAME" --tail=50 || true
-                else
-                  echo "Waiting for health endpoint... ($i/10)"
-                  sleep 3
-                fi
-              fi
-            done
-          else
-            echo "⚠ No Running pods found for health check"
-          fi
-          
-          # Verify NodePort service
-          NODEPORT=$(kubectl get svc itam-app -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "")
-          if [ "$NODEPORT" == "31415" ]; then
-            echo "✓ NodePort service is configured correctly (port 31415)"
-          else
-            echo "⚠ NodePort is $NODEPORT (expected 31415)"
-          fi
-          
-          # Test health endpoint via NodePort service on worker nodes
-          echo ""
-          echo "Testing health endpoint via NodePort service on worker nodes..."
-          WORKER1_IP="${{ needs.infrastructure.outputs.worker1_ip }}"
-          WORKER2_IP="${{ needs.infrastructure.outputs.worker2_ip }}"
-          
-          HEALTH_CHECK_PASSED=false
-          for WORKER_IP in "$WORKER1_IP" "$WORKER2_IP"; do
-            if [ -n "$WORKER_IP" ] && [ "$WORKER_IP" != "" ]; then
-              echo "Testing http://$WORKER_IP:31415/health..."
-              if curl -s --max-time 5 "http://$WORKER_IP:31415/health" > /dev/null 2>&1; then
-                echo "✓ Health endpoint accessible via NodePort on $WORKER_IP"
-                curl -s "http://$WORKER_IP:31415/health"
-                HEALTH_CHECK_PASSED=true
-                break
-              else
-                echo "⚠ Health endpoint not accessible on $WORKER_IP"
-              fi
-            fi
-          done
-          
-          if [ "$HEALTH_CHECK_PASSED" == "true" ]; then
-            echo "✓ Health endpoint is accessible via NodePort (ALB should be able to reach it)"
-          else
-            echo "⚠ Health endpoint not accessible via NodePort on worker nodes"
-            echo "This may cause ALB health check failures"
-            echo "Checking if pods are running on worker nodes..."
-            kubectl get pods -l app=itam-app -o wide
-          fi
-          
           echo ""
           echo "✓ Deployment completed"
           echo "Image deployed: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}"
