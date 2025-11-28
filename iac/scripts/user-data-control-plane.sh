@@ -294,6 +294,24 @@ spec:
         volumeMounts:
         - name: data
           mountPath: {{ .Values.persistence.mountPath }}
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.service.port }}
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.service.port }}
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
       volumes:
@@ -369,8 +387,62 @@ PV_STATUS=$(kubectl get pv itam-nfs-pv -o jsonpath='{.status.phase}' 2>/dev/null
 echo "PersistentVolume status: $PV_STATUS"
 echo ""
 echo "Step 3: Deploying application..."
+# Accept image parameters (optional, defaults from values.yaml)
+IMAGE_REPO="${1:-}"
+IMAGE_TAG="${2:-}"
 if command -v helm &> /dev/null; then
-  helm upgrade --install itam-app . --values values.yaml --timeout 5m --wait=false
+  # Check if Helm release exists
+  if helm list -n default | grep -q "itam-app"; then
+    echo "Helm release 'itam-app' already exists. Upgrading..."
+  else
+    echo "Helm release 'itam-app' does not exist. Checking for existing resources..."
+    # If resources exist but aren't managed by Helm, delete them so Helm can create fresh
+    if kubectl get pvc itam-app-pvc -n default &>/dev/null; then
+      MANAGED_BY=$(kubectl get pvc itam-app-pvc -n default -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || echo "")
+      if [ "$MANAGED_BY" != "Helm" ]; then
+        echo "Existing PVC found but not managed by Helm. Deleting to allow Helm to create it..."
+        # Scale down deployment first to release the PVC
+        if kubectl get deployment itam-app -n default &>/dev/null; then
+          kubectl scale deployment itam-app -n default --replicas=0 || true
+          sleep 5
+        fi
+        kubectl delete pvc itam-app-pvc -n default --wait=false || true
+        sleep 3
+      fi
+    fi
+    # Delete deployment if not managed by Helm
+    if kubectl get deployment itam-app -n default &>/dev/null; then
+      MANAGED_BY=$(kubectl get deployment itam-app -n default -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || echo "")
+      if [ "$MANAGED_BY" != "Helm" ]; then
+        echo "Existing deployment found but not managed by Helm. Deleting..."
+        kubectl delete deployment itam-app -n default --wait=false || true
+      fi
+    fi
+    # Delete service if not managed by Helm
+    if kubectl get svc itam-app -n default &>/dev/null; then
+      MANAGED_BY=$(kubectl get svc itam-app -n default -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || echo "")
+      if [ "$MANAGED_BY" != "Helm" ]; then
+        echo "Existing service found but not managed by Helm. Deleting..."
+        kubectl delete svc itam-app -n default --wait=false || true
+      fi
+    fi
+    echo "Waiting for resources to be deleted..."
+    sleep 5
+  fi
+  # Deploy with Helm
+  if [ -n "$IMAGE_REPO" ] && [ -n "$IMAGE_TAG" ]; then
+    echo "Using custom image: $IMAGE_REPO:$IMAGE_TAG"
+    helm upgrade --install itam-app . \
+      --values values.yaml \
+      --set image.repository="$IMAGE_REPO" \
+      --set image.tag="$IMAGE_TAG" \
+      --set image.pullPolicy=Always \
+      --timeout 5m \
+      --wait=false
+  else
+    echo "Using default image from values.yaml"
+    helm upgrade --install itam-app . --values values.yaml --timeout 5m --wait=false
+  fi
 else
   kubectl apply -f templates/pvc.yaml
   kubectl apply -f templates/deployment.yaml
