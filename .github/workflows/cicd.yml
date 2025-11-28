@@ -977,48 +977,112 @@ jobs:
           name: ssh-key
           path: ~/.ssh/
 
-      - name: Verify or retrieve SSH key
+      - name: Retrieve SSH key from Terraform state (if artifact missing)
         continue-on-error: true
         run: |
           mkdir -p ~/.ssh
           
-          # Check if artifact download worked (use $HOME instead of ~ in file checks)
-          if [ -f "$HOME/.ssh/KP.pem" ]; then
-            echo "✓ SSH key downloaded from artifact"
-            mv "$HOME/.ssh/KP.pem" "$HOME/.ssh/id_rsa"
-            chmod 600 "$HOME/.ssh/id_rsa"
-          elif [ -f "$HOME/.ssh/id_rsa" ]; then
+          # Check if we already have the key
+          if [ -f "$HOME/.ssh/KP.pem" ] || [ -f "$HOME/.ssh/id_rsa" ]; then
             echo "✓ SSH key already available"
+            if [ -f "$HOME/.ssh/KP.pem" ]; then
+              mv "$HOME/.ssh/KP.pem" "$HOME/.ssh/id_rsa"
+            fi
             chmod 600 "$HOME/.ssh/id_rsa"
+            exit 0
+          fi
+          
+          echo "SSH key artifact not found. Attempting to retrieve from Terraform state..."
+          
+          # Set up Terraform to access state
+          cd iac/terraform
+          
+          # Configure AWS credentials (same as infrastructure job)
+          export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
+          export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
+          export AWS_DEFAULT_REGION="${{ secrets.AWS_REGION || 'us-east-1' }}"
+          
+          # Initialize Terraform (if needed)
+          terraform init -backend=false 2>/dev/null || terraform init
+          
+          # Try to get SSH key from Terraform state
+          if terraform state show tls_private_key.ITAM-KP &>/dev/null 2>&1; then
+            echo "Found SSH key in Terraform state. Extracting..."
+            
+            # Try JSON output
+            PRIVATE_KEY=$(terraform state show -json tls_private_key.ITAM-KP 2>/dev/null | grep -o '"private_key_pem": "[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
+            
+            if [ -n "$PRIVATE_KEY" ] && [ "$PRIVATE_KEY" != "null" ] && [ ${#PRIVATE_KEY} -gt 100 ]; then
+              echo "$PRIVATE_KEY" > "$HOME/.ssh/id_rsa"
+              chmod 600 "$HOME/.ssh/id_rsa"
+              echo "✓ SSH key retrieved from Terraform state (JSON)"
+            else
+              # Try text output
+              PRIVATE_KEY=$(terraform state show tls_private_key.ITAM-KP 2>/dev/null | grep "private_key_pem" | head -1 | sed 's/.*= "\(.*\)".*/\1/' || echo "")
+              if [ -n "$PRIVATE_KEY" ] && [ "$PRIVATE_KEY" != "null" ] && [ ${#PRIVATE_KEY} -gt 100 ]; then
+                echo "$PRIVATE_KEY" > "$HOME/.ssh/id_rsa"
+                chmod 600 "$HOME/.ssh/id_rsa"
+                echo "✓ SSH key retrieved from Terraform state (text)"
+              else
+                echo "⚠ Could not extract valid SSH key from Terraform state"
+              fi
+            fi
           else
-            echo "⚠ WARNING: SSH key not found in artifact."
-            echo "This may happen when:"
-            echo "  1. Artifact expired (retention is 1 day)"
-            echo "  2. First run and infrastructure already exists"
-            echo "  3. Infrastructure was created outside this workflow"
-            echo ""
-            echo "The SSH key should have been prepared in the infrastructure phase."
-            echo "If this fails, you may need to:"
-            echo "  1. Re-run infrastructure creation to generate new key"
-            echo "  2. Or manually provide the SSH key"
-            echo ""
-            echo "For now, the workflow will continue and may fail at deployment step."
+            echo "⚠ SSH key not found in Terraform state"
+            echo "This may mean:"
+            echo "  1. Infrastructure was created outside Terraform"
+            echo "  2. Terraform state doesn't include the key"
+            echo "  3. State file is not accessible"
+          fi
+
+      - name: Verify SSH key is available
+        run: |
+          if [ -f "$HOME/.ssh/id_rsa" ]; then
+            KEY_SIZE=$(wc -c < "$HOME/.ssh/id_rsa")
+            if [ "$KEY_SIZE" -gt 100 ]; then
+              echo "✓ SSH key is available and valid (size: $KEY_SIZE bytes)"
+              chmod 600 "$HOME/.ssh/id_rsa"
+            else
+              echo "ERROR: SSH key file is too small or invalid"
+              exit 1
+            fi
+          else
+            echo "ERROR: SSH key is required for deployment but not available"
+            echo "Please ensure:"
+            echo "  1. Infrastructure was created by this workflow, OR"
+            echo "  2. SSH key artifact is available, OR"
+            echo "  3. Terraform state includes the SSH key"
+            exit 1
           fi
 
       - name: Set up SSH and get kubeconfig
         run: |
-          chmod 600 ~/.ssh/KP.pem
           CONTROL_PLANE_IP="${{ needs.infrastructure.outputs.control_plane_ip }}"
+          SSH_KEY_PATH="$HOME/.ssh/id_rsa"
+          
+          if [ ! -f "$SSH_KEY_PATH" ]; then
+            echo "ERROR: SSH key not found at $SSH_KEY_PATH"
+            echo "This is required for deployment."
+            exit 1
+          fi
+          
+          chmod 600 "$SSH_KEY_PATH"
           mkdir -p ~/.kube
           mkdir -p ~/.ssh
           ssh-keyscan -H $CONTROL_PLANE_IP >> ~/.ssh/known_hosts 2>/dev/null || true
+          
           # Get kubeconfig from control plane
-          ssh -i ~/.ssh/KP.pem -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "cat /home/ubuntu/.kube/config" > ~/.kube/config
+          echo "Retrieving kubeconfig from control plane..."
+          ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "cat /home/ubuntu/.kube/config" > ~/.kube/config
           chmod 600 ~/.kube/config
+          
           # Update to use public IP
           sed -i "s|10.0.1.10:6443|$CONTROL_PLANE_IP:6443|g" ~/.kube/config
           kubectl config set-cluster kubernetes --insecure-skip-tls-verify=true
+          
           # Verify
+          echo "Verifying Kubernetes connection..."
           kubectl cluster-info
           kubectl get nodes
 
@@ -1062,7 +1126,7 @@ jobs:
           IMAGE_REPO="${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}"
           IMAGE_TAG="${{ env.DOCKER_TAG }}"
           echo "Deploying with image: $IMAGE_REPO:$IMAGE_TAG"
-          ssh -i ~/.ssh/KP.pem -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP <<ENDSSH
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP <<ENDSSH
             cd /home/ubuntu/helm
             ./deploy.sh "$IMAGE_REPO" "$IMAGE_TAG"
           ENDSSH
