@@ -142,12 +142,16 @@ jobs:
         id: check-outputs
         working-directory: iac/terraform
         run: |
-          # Check if outputs exist in Terraform state
-          if terraform output CONTROL-PLANE-PUBLIC-IP &>/dev/null 2>&1; then
-            echo "Outputs exist in Terraform state"
+          # Check if public IP outputs exist in Terraform state
+          # Public IPs might be null if instances don't have public IPs assigned
+          CONTROL_PLANE_OUTPUT=$(terraform output -raw CONTROL-PLANE-PUBLIC-IP 2>&1 || echo "")
+          if [ -n "$CONTROL_PLANE_OUTPUT" ] && [ "$CONTROL_PLANE_OUTPUT" != "null" ] && \
+             echo "$CONTROL_PLANE_OUTPUT" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"; then
+            echo "Public IP outputs exist in Terraform state"
             echo "outputs_exist=true" >> $GITHUB_OUTPUT
           else
-            echo "Outputs not found in Terraform state"
+            echo "Public IP outputs not found or are null in Terraform state"
+            echo "This may mean instances don't have public IPs assigned"
             echo "outputs_exist=false" >> $GITHUB_OUTPUT
           fi
 
@@ -158,9 +162,9 @@ jobs:
             echo "Applying Terraform changes..."
             terraform apply -auto-approve tfplan
           elif [ "${{ steps.check-outputs.outputs.outputs_exist }}" != "true" ]; then
-            echo "No changes detected, but outputs are missing from state."
-            echo "Running terraform apply to populate outputs..."
-            terraform apply -auto-approve
+            echo "No changes detected, but public IP outputs are missing or null."
+            echo "Running terraform apply to refresh state and populate outputs..."
+            terraform apply -auto-approve -refresh=true
           else
             echo "No changes detected. Skipping Terraform apply."
             echo "Using existing infrastructure."
@@ -178,20 +182,58 @@ jobs:
           
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             # Get outputs using -raw, capture both stdout and stderr, filter out warnings
-            # Use tail -1 to get only the last line (the actual value)
-            CONTROL_PLANE_IP=$(terraform output -raw CONTROL-PLANE-PUBLIC-IP 2>&1 | grep -v "Warning:" | grep -v "│" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || echo "")
-            WORKER1_IP=$(terraform output -raw WORKER-1-PUBLIC-IP 2>&1 | grep -v "Warning:" | grep -v "│" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || echo "")
-            WORKER2_IP=$(terraform output -raw WORKER-2-PUBLIC-IP 2>&1 | grep -v "Warning:" | grep -v "│" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || echo "")
+            CONTROL_PLANE_IP=$(terraform output -raw CONTROL-PLANE-PUBLIC-IP 2>&1 | grep -v "Warning:" | grep -v "│" | grep -v "Error:" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || echo "")
+            WORKER1_IP=$(terraform output -raw WORKER-1-PUBLIC-IP 2>&1 | grep -v "Warning:" | grep -v "│" | grep -v "Error:" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || echo "")
+            WORKER2_IP=$(terraform output -raw WORKER-2-PUBLIC-IP 2>&1 | grep -v "Warning:" | grep -v "│" | grep -v "Error:" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || echo "")
             
-            # Alternative: Try to get just the value line if the above doesn't work
-            if [ -z "$CONTROL_PLANE_IP" ]; then
-              CONTROL_PLANE_IP=$(terraform output -raw CONTROL-PLANE-PUBLIC-IP 2>&1 | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || echo "")
+            # If Terraform outputs are null or empty, try to get public IPs via AWS CLI
+            if [ -z "$CONTROL_PLANE_IP" ] || [ "$CONTROL_PLANE_IP" == "null" ]; then
+              echo "Public IP not found in Terraform output for control plane, trying AWS CLI..."
+              # Get instance ID from state - try multiple parsing methods
+              CONTROL_PLANE_INSTANCE_ID=$(terraform state show aws_instance.CONTROL-PLANE 2>/dev/null | grep -E "^\s*id\s*=" | head -1 | sed 's/.*= "\(.*\)".*/\1/' || echo "")
+              if [ -z "$CONTROL_PLANE_INSTANCE_ID" ]; then
+                # Alternative: use terraform state list and filter
+                CONTROL_PLANE_INSTANCE_ID=$(terraform state list | grep "aws_instance.CONTROL-PLANE" && terraform state show aws_instance.CONTROL-PLANE 2>/dev/null | grep -i "id" | grep -v "arn" | head -1 | awk -F'"' '{print $2}' || echo "")
+              fi
+              if [ -n "$CONTROL_PLANE_INSTANCE_ID" ] && [ "$CONTROL_PLANE_INSTANCE_ID" != "null" ] && [[ "$CONTROL_PLANE_INSTANCE_ID" =~ ^i- ]]; then
+                echo "Found instance ID: $CONTROL_PLANE_INSTANCE_ID"
+                CONTROL_PLANE_IP=$(aws ec2 describe-instances --instance-ids "$CONTROL_PLANE_INSTANCE_ID" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --region us-east-1 2>/dev/null | grep -v "None" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" || echo "")
+                if [ -n "$CONTROL_PLANE_IP" ]; then
+                  echo "Found control plane public IP via AWS CLI: $CONTROL_PLANE_IP"
+                else
+                  echo "Instance $CONTROL_PLANE_INSTANCE_ID does not have a public IP assigned"
+                fi
+              else
+                echo "Could not extract instance ID from Terraform state"
+              fi
             fi
-            if [ -z "$WORKER1_IP" ]; then
-              WORKER1_IP=$(terraform output -raw WORKER-1-PUBLIC-IP 2>&1 | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || echo "")
+            
+            if [ -z "$WORKER1_IP" ] || [ "$WORKER1_IP" == "null" ]; then
+              echo "Public IP not found in Terraform output for worker 1, trying AWS CLI..."
+              WORKER1_INSTANCE_ID=$(terraform state show aws_instance.WORKER-1 2>/dev/null | grep -E "^\s*id\s*=" | head -1 | sed 's/.*= "\(.*\)".*/\1/' || echo "")
+              if [ -z "$WORKER1_INSTANCE_ID" ]; then
+                WORKER1_INSTANCE_ID=$(terraform state list | grep "aws_instance.WORKER-1" && terraform state show aws_instance.WORKER-1 2>/dev/null | grep -i "id" | grep -v "arn" | head -1 | awk -F'"' '{print $2}' || echo "")
+              fi
+              if [ -n "$WORKER1_INSTANCE_ID" ] && [ "$WORKER1_INSTANCE_ID" != "null" ] && [[ "$WORKER1_INSTANCE_ID" =~ ^i- ]]; then
+                WORKER1_IP=$(aws ec2 describe-instances --instance-ids "$WORKER1_INSTANCE_ID" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --region us-east-1 2>/dev/null | grep -v "None" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" || echo "")
+                if [ -n "$WORKER1_IP" ]; then
+                  echo "Found worker 1 public IP via AWS CLI: $WORKER1_IP"
+                fi
+              fi
             fi
-            if [ -z "$WORKER2_IP" ]; then
-              WORKER2_IP=$(terraform output -raw WORKER-2-PUBLIC-IP 2>&1 | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || echo "")
+            
+            if [ -z "$WORKER2_IP" ] || [ "$WORKER2_IP" == "null" ]; then
+              echo "Public IP not found in Terraform output for worker 2, trying AWS CLI..."
+              WORKER2_INSTANCE_ID=$(terraform state show aws_instance.WORKER-2 2>/dev/null | grep -E "^\s*id\s*=" | head -1 | sed 's/.*= "\(.*\)".*/\1/' || echo "")
+              if [ -z "$WORKER2_INSTANCE_ID" ]; then
+                WORKER2_INSTANCE_ID=$(terraform state list | grep "aws_instance.WORKER-2" && terraform state show aws_instance.WORKER-2 2>/dev/null | grep -i "id" | grep -v "arn" | head -1 | awk -F'"' '{print $2}' || echo "")
+              fi
+              if [ -n "$WORKER2_INSTANCE_ID" ] && [ "$WORKER2_INSTANCE_ID" != "null" ] && [[ "$WORKER2_INSTANCE_ID" =~ ^i- ]]; then
+                WORKER2_IP=$(aws ec2 describe-instances --instance-ids "$WORKER2_INSTANCE_ID" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --region us-east-1 2>/dev/null | grep -v "None" | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" || echo "")
+                if [ -n "$WORKER2_IP" ]; then
+                  echo "Found worker 2 public IP via AWS CLI: $WORKER2_IP"
+                fi
+              fi
             fi
             
             # Check if we got valid IPs (not empty and matches IP pattern)
@@ -504,4 +546,3 @@ jobs:
           echo ""
           echo "✓ Deployment completed"
           echo "Image deployed: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}"
-
