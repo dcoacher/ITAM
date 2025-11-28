@@ -588,6 +588,26 @@ jobs:
             fi
           fi
 
+      - name: Store SSH key in AWS Secrets Manager (if available)
+        continue-on-error: true
+        working-directory: iac/terraform
+        run: |
+          if [ -f "KP.pem" ]; then
+            echo "Storing SSH key in AWS Secrets Manager as fallback..."
+            aws secretsmanager create-secret \
+              --name "itam/ssh-key" \
+              --secret-string file://KP.pem \
+              --region "${{ secrets.AWS_REGION || 'us-east-1' }}" \
+              2>/dev/null || \
+            aws secretsmanager update-secret \
+              --secret-id "itam/ssh-key" \
+              --secret-string file://KP.pem \
+              --region "${{ secrets.AWS_REGION || 'us-east-1' }}" \
+              2>/dev/null && echo "✓ SSH key stored in AWS Secrets Manager" || echo "⚠ Could not store in Secrets Manager"
+          else
+            echo "⚠ KP.pem not found, skipping Secrets Manager storage"
+          fi
+
       - name: Prepare SSH key output (base64 encoded)
         id: ssh-key-output
         continue-on-error: true
@@ -596,7 +616,7 @@ jobs:
           if [ -f "KP.pem" ]; then
             SSH_KEY_B64=$(base64 -w 0 KP.pem || base64 KP.pem | tr -d '\n')
             echo "ssh_key_base64=$SSH_KEY_B64" >> $GITHUB_OUTPUT
-            echo "✓ SSH key prepared for workflow output (base64 encoded)"
+            echo "✓ SSH key prepared for workflow output (base64 encoded, length: ${#SSH_KEY_B64})"
           else
             echo "⚠ SSH key not available for workflow output"
             echo "ssh_key_base64=" >> $GITHUB_OUTPUT
@@ -1065,15 +1085,34 @@ jobs:
           echo ""
           echo "Method 3: Attempting to retrieve from Terraform state..."
           
-          # Method 3: Retrieve from Terraform state
+          # Method 3: Try AWS Secrets Manager
+          echo ""
+          echo "Method 3: Attempting to retrieve from AWS Secrets Manager..."
+          if aws secretsmanager get-secret-value --secret-id "itam/ssh-key" --region "${{ secrets.AWS_REGION || 'us-east-1' }}" --query SecretString --output text > "$HOME/.ssh/id_rsa" 2>/dev/null; then
+            chmod 600 "$HOME/.ssh/id_rsa"
+            KEY_SIZE=$(wc -c < "$HOME/.ssh/id_rsa")
+            if [ "$KEY_SIZE" -gt 100 ]; then
+              echo "✓ SSH key retrieved from AWS Secrets Manager (size: $KEY_SIZE bytes)"
+              echo "✓ SSH key ready (Method 3: AWS Secrets Manager)"
+              exit 0
+            else
+              rm -f "$HOME/.ssh/id_rsa"
+              echo "✗ Key from Secrets Manager is too small"
+            fi
+          else
+            echo "✗ SSH key not found in AWS Secrets Manager"
+          fi
+          
+          # Method 4: Retrieve from Terraform state
+          echo ""
+          echo "Method 4: Attempting to retrieve from Terraform state..."
+          
           cd iac/terraform
           
-          # Initialize Terraform (if needed) - try without backend first, then with backend
-          echo "Initializing Terraform..."
-          if terraform init -backend=false 2>&1 | head -20; then
-            echo "✓ Terraform initialized (no backend)"
-          elif terraform init 2>&1 | head -20; then
-            echo "✓ Terraform initialized (with backend)"
+          # Initialize Terraform with backend (required for remote state)
+          echo "Initializing Terraform with backend..."
+          if terraform init 2>&1 | head -30; then
+            echo "✓ Terraform initialized"
           else
             echo "⚠ Terraform init had issues, but continuing..."
           fi
