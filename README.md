@@ -20,10 +20,10 @@ Make your IT Asset Management process simple and controlled. ITAM is a complete 
     [4.4 Infrastructure as Code](#44-infrastructure-as-code)<br>
     [4.5 Docker Container Details](#45-docker-container-details)<br>
     [4.6 Kubernetes Deployment](#46-kubernetes-deployment)<br>
-5. [Deployment Process](#5-deployment-process)<br>
-6. [Project Files](#6-project-files)<br>
+5. [Project Files](#5-project-files)<br>
+6. [Deployment Process](#6-deployment-process)<br>
 7. [License](#7-license)<br>
-8. [Authors](#8-authors)<br>
+8. [Author](#8-author)<br>
 9. [Previous Versions](#9-previous-versions)<br>
 10. [Feedback](#10-feedback)<br>
 
@@ -264,10 +264,7 @@ Items are stored as a JSON object where each key is an item ID and the value con
   - Readiness: `/health` endpoint, 10s initial delay
   - Liveness: `/health` endpoint, 30s initial delay
 
-## 5. Deployment Process
-For Application Deployment please use separate [Application User Guide](https://github.com/dcoacher/ITAM/blob/main/USER-GUIDE.md).
-
-## 6. Project Files
+## 5. Project Files
 - :file_folder: *`.github`* folder contains CICD workflows
     - :file_folder: *`workflows`* subfolder contains CICD pipelines file
         - :file_folder: *`tests`* subfolder contains test file for CICD process
@@ -313,10 +310,13 @@ For Application Deployment please use separate [Application User Guide](https://
 - :page_facing_up: *`README.md`* Readme File
 - :page_facing_up: *`USER-GUIDE.md`* Application Usage User Guide
 
+## 6. Deployment Process
+For Application Deployment please use separate [Application User Guide](https://github.com/dcoacher/ITAM/blob/main/USER-GUIDE.md).
+
 ## 7. License
 [![GPLv3 License](https://img.shields.io/badge/License-GPL%20v3-yellow.svg)](https://github.com/dcoacher/ITAM/blob/main/LICENSE)
 
-## 8. Authors
+## 8. Author
 Desmond Coacher - [@dcoacher](https://github.com/dcoacher)
 
 ## 9. Previous Versions
@@ -325,5 +325,5 @@ Desmond Coacher - [@dcoacher](https://github.com/dcoacher)
 **Release date:** July 28, 2025
 
 ## 10. Feedback
-If you have any feedback, feel free to contact us via email: 
+If you have any feedback, feel free to contact me via email:<br>
 [Desmond Coacher](mailto:dcoacher@outlook.com)
