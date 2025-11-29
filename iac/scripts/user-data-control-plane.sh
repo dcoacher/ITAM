@@ -361,47 +361,39 @@ EOF
 cat <<'EOF' >/home/ubuntu/helm/deploy.sh
 #!/bin/bash
 set -euo pipefail
-echo "=== ITAM Application Deployment ==="
-echo ""
-echo "Step 1: Checking Kubernetes API server..."
 MAX_WAIT=300
 ELAPSED=0
 while [ $ELAPSED -lt $MAX_WAIT ]; do
   if kubectl cluster-info &>/dev/null 2>&1 && kubectl get nodes &>/dev/null 2>&1; then
-    echo "✓ API server is ready"
     break
   fi
-  echo "Waiting... ($ELAPSED/$MAX_WAIT seconds)"
   sleep 10
   ELAPSED=$((ELAPSED + 10))
 done
 if ! kubectl cluster-info &>/dev/null 2>&1; then
-  echo "ERROR: Cannot connect to Kubernetes API server"
   exit 1
 fi
-echo ""
-echo "Step 2: Deploying NFS storage..."
 kubectl apply -f nfs-pv.yaml
 sleep 10
-PV_STATUS=$(kubectl get pv itam-nfs-pv -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
-echo "PersistentVolume status: $PV_STATUS"
-echo ""
-echo "Step 3: Deploying application..."
-# Accept image parameters (optional, defaults from values.yaml)
 IMAGE_REPO="$${1:-}"
 IMAGE_TAG="$${2:-}"
 if command -v helm &> /dev/null; then
-  # Check if Helm release exists
   if helm list -n default | grep -q "itam-app"; then
-    echo "Helm release 'itam-app' already exists. Upgrading..."
+    if [ -n "$IMAGE_REPO" ] && [ -n "$IMAGE_TAG" ]; then
+      helm upgrade --install itam-app . \
+        --values values.yaml \
+        --set image.repository="$IMAGE_REPO" \
+        --set image.tag="$IMAGE_TAG" \
+        --set image.pullPolicy=Always \
+        --timeout 5m \
+        --wait=false
+    else
+      helm upgrade --install itam-app . --values values.yaml --timeout 5m --wait=false
+    fi
   else
-    echo "Helm release 'itam-app' does not exist. Checking for existing resources..."
-    # If resources exist but aren't managed by Helm, delete them so Helm can create fresh
     if kubectl get pvc itam-app-pvc -n default &>/dev/null; then
       MANAGED_BY=$(kubectl get pvc itam-app-pvc -n default -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || echo "")
       if [ "$MANAGED_BY" != "Helm" ]; then
-        echo "Existing PVC found but not managed by Helm. Deleting to allow Helm to create it..."
-        # Scale down deployment first to release the PVC
         if kubectl get deployment itam-app -n default &>/dev/null; then
           kubectl scale deployment itam-app -n default --replicas=0 || true
           sleep 5
@@ -410,88 +402,50 @@ if command -v helm &> /dev/null; then
         sleep 3
       fi
     fi
-    # Delete deployment if not managed by Helm
     if kubectl get deployment itam-app -n default &>/dev/null; then
       MANAGED_BY=$(kubectl get deployment itam-app -n default -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || echo "")
       if [ "$MANAGED_BY" != "Helm" ]; then
-        echo "Existing deployment found but not managed by Helm. Deleting..."
         kubectl delete deployment itam-app -n default --wait=false || true
       fi
     fi
-    # Delete service if not managed by Helm
     if kubectl get svc itam-app -n default &>/dev/null; then
       MANAGED_BY=$(kubectl get svc itam-app -n default -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || echo "")
       if [ "$MANAGED_BY" != "Helm" ]; then
-        echo "Existing service found but not managed by Helm. Deleting..."
         kubectl delete svc itam-app -n default --wait=false || true
       fi
     fi
-    echo "Waiting for resources to be deleted..."
     sleep 5
-  fi
-  # Deploy with Helm
-  if [ -n "$IMAGE_REPO" ] && [ -n "$IMAGE_TAG" ]; then
-    echo "Using custom image: $IMAGE_REPO:$IMAGE_TAG"
-    helm upgrade --install itam-app . \
-      --values values.yaml \
-      --set image.repository="$IMAGE_REPO" \
-      --set image.tag="$IMAGE_TAG" \
-      --set image.pullPolicy=Always \
-      --timeout 5m \
-      --wait=false
-  else
-    echo "Using default image from values.yaml"
-    helm upgrade --install itam-app . --values values.yaml --timeout 5m --wait=false
+    if [ -n "$IMAGE_REPO" ] && [ -n "$IMAGE_TAG" ]; then
+      helm upgrade --install itam-app . \
+        --values values.yaml \
+        --set image.repository="$IMAGE_REPO" \
+        --set image.tag="$IMAGE_TAG" \
+        --set image.pullPolicy=Always \
+        --timeout 5m \
+        --wait=false
+    else
+      helm upgrade --install itam-app . --values values.yaml --timeout 5m --wait=false
+    fi
   fi
 else
   kubectl apply -f templates/pvc.yaml
   kubectl apply -f templates/deployment.yaml
   kubectl apply -f templates/service.yaml
 fi
-echo ""
-echo "Step 4: Waiting for deployment..."
 MAX_WAIT=600
 ELAPSED=0
-READY=false
 while [ $ELAPSED -lt $MAX_WAIT ]; do
   if ! kubectl cluster-info &>/dev/null 2>&1; then
-    echo "Warning: API server unreachable, retrying..."
     sleep 15
     ELAPSED=$((ELAPSED + 15))
     continue
   fi
   if kubectl wait --for=condition=available deployment/itam-app --timeout=15s &>/dev/null 2>&1; then
-    READY=true
     break
-  fi
-  RUNNING=$(kubectl get pods -l app=itam-app --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l || echo "0")
-  TOTAL=$(kubectl get pods -l app=itam-app --no-headers 2>/dev/null | wc -l || echo "0")
-  if [ "$TOTAL" -gt 0 ]; then
-    echo "Status: $RUNNING/$TOTAL pods running ($ELAPSED/$MAX_WAIT seconds)"
-  else
-    echo "Waiting for pods... ($ELAPSED/$MAX_WAIT seconds)"
   fi
   sleep 15
   ELAPSED=$((ELAPSED + 15))
 done
-echo ""
-echo "=== Deployment Status ==="
-kubectl get pods -l app=itam-app 2>/dev/null || echo "Could not retrieve pods"
-echo ""
-kubectl get svc itam-app 2>/dev/null || echo "Could not retrieve service"
-echo ""
-kubectl get pvc 2>/dev/null || echo "Could not retrieve PVC"
-echo ""
-if [ "$READY" = true ]; then
-  echo "✓ Deployment completed successfully"
-else
-  echo "⚠ Deployment may still be in progress"
-  echo "Check status with: kubectl get pods -l app=itam-app"
-fi
-echo ""
-echo "To access the application:"
-echo "  - NodePort: http://<node-ip>:31415"
-echo "  - Get node IPs: kubectl get nodes -o wide"
 EOF
 chown -R ubuntu:ubuntu /home/ubuntu/helm
 chmod 755 /home/ubuntu/helm /home/ubuntu/helm/deploy.sh

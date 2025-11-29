@@ -145,36 +145,15 @@ jobs:
           CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
           WORKER1_IP="${{ steps.terraform-output.outputs.worker1_ip }}"
           WORKER2_IP="${{ steps.terraform-output.outputs.worker2_ip }}"
-          echo "Waiting for instances to be ready..."
           for IP in "$CONTROL_PLANE_IP" "$WORKER1_IP" "$WORKER2_IP"; do
-            echo "Waiting for $IP..."
             for i in {1..30}; do
               if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i iac/terraform/KP.pem ubuntu@$IP "echo 'ready'" 2>/dev/null; then
-                echo "$IP is ready"
                 break
               fi
-              echo "Attempt $i/30..."
               sleep 10
             done
           done
-          
-          # Wait a bit more for user-data scripts to start
-          echo "Waiting for user-data scripts to initialize..."
           sleep 30
-
-      - name: Check user-data script progress on control plane
-        run: |
-          CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
-          echo "Checking user-data script status..."
-          # Check if cloud-init is still running
-          CLOUD_INIT_STATUS=$(ssh -i iac/terraform/KP.pem -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "sudo cloud-init status 2>/dev/null || echo 'unknown'" 2>/dev/null || echo "unknown")
-          echo "Cloud-init status: $CLOUD_INIT_STATUS"
-          # Check if kubeadm is installed (indicates user-data is progressing)
-          KUBEADM_INSTALLED=$(ssh -i iac/terraform/KP.pem -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "command -v kubeadm >/dev/null 2>&1 && echo 'yes' || echo 'no'" 2>/dev/null || echo "no")
-          echo "kubeadm installed: $KUBEADM_INSTALLED"
-          # Show recent cloud-init logs
-          echo "Recent cloud-init logs:"
-          ssh -i iac/terraform/KP.pem -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "sudo tail -20 /var/log/cloud-init-output.log" 2>/dev/null || echo "Could not retrieve logs"
 
       - name: Set up SSH keys
         run: |
@@ -191,67 +170,34 @@ jobs:
       - name: Wait for Kubernetes control plane to be ready
         run: |
           CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
-          echo "Waiting for Kubernetes API server to be ready..."
-          echo "This may take 3-5 minutes after instance startup..."
-          
-          # First, wait for kubeadm init to complete
-          echo "Step 1: Waiting for kubeadm init to complete..."
           for i in {1..60}; do
             if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "test -f /etc/kubernetes/admin.conf" 2>/dev/null; then
-              echo "✓ kubeadm init completed (admin.conf exists)"
               break
             fi
             if [ $i -eq 60 ]; then
-              echo "ERROR: kubeadm init did not complete after 10 minutes"
-              echo "Checking kubeadm status..."
-              ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "sudo journalctl -u kubelet --no-pager -n 50" || true
               exit 1
             fi
-            echo "Waiting for kubeadm init... ($i/60 attempts)"
             sleep 10
           done
-          
-          # Wait for API server pod to be running
-          echo "Step 2: Waiting for API server pod to be running..."
           for i in {1..60}; do
             API_STATUS=$(ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "sudo crictl ps --name kube-apiserver --state Running 2>/dev/null | grep -c kube-apiserver || echo '0'" 2>/dev/null || echo "0")
             if [ "$API_STATUS" != "0" ]; then
-              echo "✓ API server pod is running"
               break
             fi
             if [ $i -eq 60 ]; then
-              echo "ERROR: API server pod not running after 10 minutes"
-              echo "Checking pod status..."
-              ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "sudo crictl ps -a | grep kube-apiserver" || true
-              ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "sudo journalctl -u kubelet --no-pager -n 50" || true
               exit 1
             fi
-            echo "Waiting for API server pod... ($i/60 attempts)"
             sleep 10
           done
-          
-          # Wait for API server to respond
-          echo "Step 3: Waiting for API server to respond..."
           for i in {1..60}; do
             if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/home/ubuntu/.kube/config cluster-info &>/dev/null" 2>/dev/null; then
-              echo "✓ Kubernetes API server is ready and responding"
-              # Show cluster info
-              ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/home/ubuntu/.kube/config cluster-info" || true
               break
             fi
             if [ $i -eq 60 ]; then
-              echo "ERROR: API server not responding after 10 minutes"
-              echo "Checking API server logs..."
-              ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "sudo crictl logs \$(sudo crictl ps --name kube-apiserver -q | head -1) --tail 50" 2>/dev/null || true
-              echo "Checking kubelet status..."
-              ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "sudo systemctl status kubelet --no-pager -l" || true
               exit 1
             fi
-            echo "Waiting for API server response... ($i/60 attempts)"
             sleep 10
           done
-          
-          echo "✓ Kubernetes control plane is fully ready"
 
       - name: Get join command from control plane
         id: join-command
@@ -270,7 +216,6 @@ jobs:
             set -e
             INSTANCE_ID=\$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
             sudo hostnamectl set-hostname k8s-worker-\${INSTANCE_ID}
-            echo "Worker 1 hostname set to: k8s-worker-\${INSTANCE_ID}"
             sudo $JOIN_CMD
           ENDSSH
 
@@ -282,37 +227,28 @@ jobs:
             set -e
             INSTANCE_ID=\$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
             sudo hostnamectl set-hostname k8s-worker-\${INSTANCE_ID}
-            echo "Worker 2 hostname set to: k8s-worker-\${INSTANCE_ID}"
             sudo $JOIN_CMD
           ENDSSH
 
       - name: Wait for all nodes to be ready
         run: |
           CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
-          echo "Waiting for all nodes to join the cluster..."
           for i in {1..30}; do
             NODE_COUNT=$(ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/home/ubuntu/.kube/config get nodes --no-headers 2>/dev/null | wc -l" || echo "0")
             READY_COUNT=$(ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/home/ubuntu/.kube/config get nodes --no-headers 2>/dev/null | grep -c Ready || echo '0'")
-            echo "Nodes: $READY_COUNT/$NODE_COUNT ready (attempt $i/30)"
             if [ "$NODE_COUNT" -ge "3" ] && [ "$READY_COUNT" -ge "3" ]; then
-              echo "All nodes are ready!"
               break
             fi
             sleep 10
           done
-          # Show node status
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP "kubectl --kubeconfig=/home/ubuntu/.kube/config get nodes"
 
       - name: Configure NFS clients on worker nodes using Ansible
         run: |
           CONTROL_PLANE_IP="${{ steps.terraform-output.outputs.control_plane_ip }}"
-          echo "Configuring NFS clients on worker nodes using Ansible..."
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP <<ENDSSH
             set -e
             cd /home/ubuntu/ansible
-            echo "Running Ansible playbook to configure NFS clients..."
-            ansible-playbook nfs.yml -v
-            echo "✓ NFS clients configured on worker nodes"
+            ansible-playbook nfs.yml
           ENDSSH
 
 
@@ -355,22 +291,15 @@ jobs:
           # Update to use public IP
           sed -i "s|10.0.1.10:6443|$CONTROL_PLANE_IP:6443|g" ~/.kube/config
           kubectl config set-cluster kubernetes --insecure-skip-tls-verify=true
-          # Verify
-          kubectl cluster-info
-          kubectl get nodes
 
       - name: Ensure NFS clients are configured on worker nodes
         run: |
           CONTROL_PLANE_IP="${{ needs.infrastructure.outputs.control_plane_ip }}"
-          echo "Ensuring NFS clients are configured on worker nodes..."
           ssh -i ~/.ssh/KP.pem -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP <<ENDSSH
             set -e
             cd /home/ubuntu/ansible
             if [ -f nfs.yml ]; then
-              echo "Running Ansible playbook to ensure NFS clients are configured..."
-              ansible-playbook nfs.yml -v || echo "NFS configuration may already be applied"
-            else
-              echo "⚠ NFS playbook not found, skipping Ansible configuration"
+              ansible-playbook nfs.yml || true
             fi
           ENDSSH
 
@@ -413,17 +342,7 @@ jobs:
           CONTROL_PLANE_IP="${{ needs.infrastructure.outputs.control_plane_ip }}"
           IMAGE_REPO="${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}"
           IMAGE_TAG="${{ env.DOCKER_TAG }}"
-          echo "Deploying with image: $IMAGE_REPO:$IMAGE_TAG"
           ssh -i ~/.ssh/KP.pem -o StrictHostKeyChecking=no ubuntu@$CONTROL_PLANE_IP <<ENDSSH
             cd /home/ubuntu/helm
             ./deploy.sh "$IMAGE_REPO" "$IMAGE_TAG"
           ENDSSH
-
-      - name: Verify deployment
-        run: |
-          echo "=== Deployment Status ==="
-          kubectl get pods -l app=itam-app
-          kubectl get svc itam-app
-          echo ""
-          echo "✓ Deployment completed"
-          echo "Image deployed: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}"
