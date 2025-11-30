@@ -42,7 +42,7 @@ For manual deployment method, ensure you have the following installed on your lo
 - Push the image: `docker push <your_dockerhub_username>/itam-app:latest`
 5. Navigate to the Terraform directory and update the next values in`terraform.tfvars`:
 - aws_access_key_id     = `"aws_access_key_id_value"`
-- aws_secret_access_key = `"ws_secret_access_key_value"`
+- aws_secret_access_key = `"aws_secret_access_key_value"`
 - aws_session_token     = `"aws_session_token_value"`
 - docker_repo           = `"your_dockerhub_username"`
 6. Navigate to `iac/terraform` folder
